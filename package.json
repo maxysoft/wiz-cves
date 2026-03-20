@@ -14,7 +14,6 @@
   },
   "keywords": [
     "web-scraping",
-    "puppeteer",
     "cve",
     "vulnerability",
     "security",
@@ -51,10 +50,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/wiz-cve-scraper.git"
+    "url": "https://github.com/maxysoft/wiz-cves.git"
   },
   "bugs": {
-    "url": "https://github.com/your-username/wiz-cve-scraper/issues"
+    "url": "https://github.com/maxysoft/wiz-cves/issues"
   },
-  "homepage": "https://github.com/your-username/wiz-cve-scraper#readme"
+  "homepage": "https://github.com/maxysoft/wiz-cves#readme"
 }
