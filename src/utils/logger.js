@@ -1,17 +1,7 @@
 const winston = require('winston');
-const path = require('path');
-const fs = require('fs-extra');
 const config = require('../config');
 
-// Ensure logs directory exists
-fs.ensureDirSync(config.paths.logs);
-
-const logFormat = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-  winston.format.errors({ stack: true }),
-  winston.format.json()
-);
-
+// Human-readable format for local development
 const consoleFormat = winston.format.combine(
   winston.format.colorize(),
   winston.format.timestamp({ format: 'HH:mm:ss' }),
@@ -20,33 +10,25 @@ const consoleFormat = winston.format.combine(
   })
 );
 
+// Structured JSON format for production (Docker log management reads stdout/stderr)
+const jsonFormat = winston.format.combine(
+  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+  winston.format.errors({ stack: true }),
+  winston.format.json()
+);
+
 const logger = winston.createLogger({
   level: config.logging.level,
-  format: logFormat,
+  format: process.env.NODE_ENV === 'production' ? jsonFormat : consoleFormat,
   defaultMeta: { service: 'wiz-cve-scraper' },
   transports: [
-    // Write all logs with level 'error' and below to error.log
-    new winston.transports.File({
-      filename: path.join(config.paths.logs, 'error.log'),
-      level: 'error',
-      maxsize: 5242880, // 5MB
-      maxFiles: 5
-    }),
-    // Write all logs to combined.log
-    new winston.transports.File({
-      filename: path.join(config.paths.logs, 'combined.log'),
-      maxsize: 5242880, // 5MB
-      maxFiles: 5
+    // All logs go to stdout; errors are additionally mirrored to stderr so
+    // Docker log drivers and `docker logs` can filter by stream.
+    new winston.transports.Console({
+      stderrLevels: ['error']
     })
   ]
 });
-
-// Add console transport for non-production environments
-if (process.env.NODE_ENV !== 'production') {
-  logger.add(new winston.transports.Console({
-    format: consoleFormat
-  }));
-}
 
 // Custom methods for specific logging scenarios
 logger.scrapeStart = (url) => {
