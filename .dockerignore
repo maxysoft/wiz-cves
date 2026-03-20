@@ -6,6 +6,7 @@
 !src/**
 !package.json
 !package-lock.json
+!entrypoint.sh
 
 # Don't send test files, docs, or dev configs into the build context
 node_modules
