@@ -416,7 +416,7 @@ class WizCVEScraper {
           }
           
           const cveData = await this.transformAlgoliaHitToCVE(hit);
-          if (cveData && validateCVEData(cveData)) {
+          if (cveData && !validateCVEData(cveData).error) {
             this.cveData.push(cveData);
           }
           
@@ -534,9 +534,12 @@ class WizCVEScraper {
         successfulResults.push(result.value);
       } else {
         const taskType = index === 0 ? 'initial' : `filter-${this.technologyFilters[index - 1]}`;
-        const error = result.status === 'rejected' ? result.reason : result.value.error;
-        failedResults.push({ taskType, error: error.message });
-        logger.warn(`Task failed: ${taskType} - ${error.message}`);
+        // result.reason is an Error object; result.value.error is already a string (from catch blocks)
+        const errorMsg = result.status === 'rejected'
+          ? result.reason.message
+          : result.value.error;
+        failedResults.push({ taskType, error: errorMsg });
+        logger.warn(`Task failed: ${taskType} - ${errorMsg}`);
       }
     });
     
@@ -613,7 +616,7 @@ class WizCVEScraper {
             }
             
             const cveData = await this.transformAlgoliaHitToCVE(hit);
-            if (cveData && validateCVEData(cveData)) {
+            if (cveData && !validateCVEData(cveData).error) {
               // Store in local map first
               localCVEs.set(cveData.cveId, cveData);
             }
@@ -656,11 +659,14 @@ class WizCVEScraper {
    */
   async extractAdditionalResources(cveId) {
     try {
+      if (!cveId) {
+        return [];
+      }
       const detailUrl = `https://www.wiz.io/vulnerability-database/cve/${cveId.toLowerCase()}`;
       const response = await axios.get(detailUrl, {
         timeout: this.algoliaConfig.timeout,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          'User-Agent': getRandomUserAgent()
         }
       });
       

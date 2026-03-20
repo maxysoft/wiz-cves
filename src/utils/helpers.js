@@ -285,8 +285,8 @@ const generateAnalytics = (cveData) => {
         (analytics.severityDistribution[cve.severity] || 0) + 1;
     }
     
-    // Score distribution
-    if (cve.score !== null && cve.score !== undefined) {
+    // Score distribution — only count numeric scores; 'N/A' and null are skipped
+    if (typeof cve.score === 'number' && !isNaN(cve.score)) {
       totalScore += cve.score;
       scoreCount++;
       
@@ -347,7 +347,7 @@ const generateAnalytics = (cveData) => {
  * @param {boolean} useTimestampedFolder - Whether to use timestamped folder
  * @returns {Promise<string>} - File path
  */
-const saveToTextFile = async (data, filename, outputDir = config.outputDir, useTimestampedFolder = true) => {
+const saveToTextFile = async (data, filename, outputDir = config.output.dir, useTimestampedFolder = true) => {
   let finalOutputDir = outputDir;
 
   if (useTimestampedFolder) {
