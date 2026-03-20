@@ -17,7 +17,7 @@ This guide covers various deployment options for the Wiz CVE Scraper application
 
 ### System Requirements
 
-- **Node.js**: Version 16.x or higher
+- **Node.js**: Version 24.x (24.14.0 recommended — see `.nvmrc`)
 - **Memory**: Minimum 2GB RAM (4GB+ recommended for production)
 - **Storage**: At least 1GB free space for output files
 - **Network**: Stable internet connection
@@ -139,7 +139,7 @@ docker run --env-file docker.env wiz-cve-scraper
 sudo apt update && sudo apt upgrade -y
 
 # Install Node.js
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
 # Install PM2 for process management
@@ -164,7 +164,7 @@ sudo apt-get install -y \
 sudo yum update -y
 
 # Install Node.js
-curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash -
+curl -fsSL https://rpm.nodesource.com/setup_24.x | sudo bash -
 sudo yum install -y nodejs
 
 # Install PM2
