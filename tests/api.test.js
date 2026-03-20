@@ -1,6 +1,6 @@
 /**
  * Comprehensive API endpoint tests using supertest.
- * All external dependencies (WizCVEScraper, file I/O) are mocked so the
+ * External dependencies (WizCVEScraper, database) are mocked so the
  * tests are fast and deterministic.
  */
 
@@ -8,50 +8,85 @@ const request = require('supertest');
 
 // ─── Mock heavy dependencies before requiring the module under test ───────────
 jest.mock('../src/scraper/WizCVEScraper');
+
+// Mock the database module
+jest.mock('../src/utils/database', () => {
+  const mockDb = {
+    saveCVEs: jest.fn().mockReturnValue(1),
+    getCVEs: jest.fn().mockReturnValue([
+      {
+        cveId: 'CVE-2025-0001',
+        severity: 'HIGH',
+        score: 8.5,
+        technologies: ['Linux'],
+        component: 'kernel',
+        additionalResources: [],
+      },
+    ]),
+    getCVEById: jest.fn().mockReturnValue({
+      cveId: 'CVE-2025-0001',
+      severity: 'HIGH',
+      score: 8.5,
+      technologies: ['Linux'],
+      component: 'kernel',
+    }),
+    countCVEs: jest.fn().mockReturnValue(1),
+    saveRun: jest.fn(),
+    getRuns: jest.fn().mockReturnValue([]),
+    saveCheckpoint: jest.fn().mockReturnValue(1),
+    getLatestCheckpoint: jest.fn().mockReturnValue({
+      timestamp: '2025-01-01T00:00:00.000Z',
+      processedCount: 42,
+      currentIndex: 42,
+      data: [],
+    }),
+    recordExecution: jest.fn(),
+    getLastExecution: jest.fn().mockReturnValue(null),
+    checkExecutionAllowed: jest.fn().mockReturnValue({ allowed: true, minutesRemaining: 0 }),
+    open: jest.fn(),
+    close: jest.fn(),
+  };
+
+  return {
+    getDatabase: jest.fn(() => mockDb),
+    CVEDatabase: jest.fn(),
+    _resetInstance: jest.fn(),
+    _mockDb: mockDb,
+  };
+});
+
+// Mock helpers that delegate to the database
 jest.mock('../src/utils/helpers', () => {
   const actual = jest.requireActual('../src/utils/helpers');
   return {
     ...actual,
-    saveToJson: jest.fn().mockResolvedValue('/tmp/output/cve_data_latest.json'),
-    loadFromJson: jest.fn().mockResolvedValue({
-      cveData: [
-        {
-          cveId: 'CVE-2025-0001',
-          severity: 'HIGH',
-          score: 8.5,
-          technologies: ['Linux'],
-          component: 'kernel',
-          additionalResources: {}
-        }
-      ]
-    }),
+    saveCVEsToDatabase: jest.fn().mockReturnValue(1),
+    loadCVEsFromDatabase: jest.fn().mockReturnValue([
+      {
+        cveId: 'CVE-2025-0001',
+        severity: 'HIGH',
+        score: 8.5,
+        technologies: ['Linux'],
+        component: 'kernel',
+        additionalResources: {},
+      },
+    ]),
     generateAnalytics: jest.fn().mockReturnValue({
       total: 1,
       severityDistribution: { HIGH: 1 },
-      averageScore: '8.50'
+      averageScore: '8.50',
     }),
-    loadLatestCheckpoint: jest.fn().mockResolvedValue({
+    loadLatestCheckpoint: jest.fn().mockReturnValue({
       timestamp: '2025-01-01T00:00:00.000Z',
       processedCount: 42,
-      currentIndex: 42
-    })
+      currentIndex: 42,
+    }),
   };
 });
 
-jest.mock('fs-extra', () => ({
-  ensureDir: jest.fn().mockResolvedValue(),
-  ensureDirSync: jest.fn(),
-  readdir: jest.fn().mockResolvedValue(['cve_data_latest.json']),
-  stat: jest.fn().mockResolvedValue({
-    size: 1024,
-    birthtime: new Date('2025-01-01'),
-    mtime: new Date('2025-01-02')
-  }),
-  static: jest.fn()
-}));
-
 // ─── Load the API after mocks are in place ────────────────────────────────────
 const CVEScraperAPI = require('../src/api');
+const { getDatabase } = require('../src/utils/database');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test Suite
@@ -59,13 +94,17 @@ const CVEScraperAPI = require('../src/api');
 describe('CVEScraperAPI — HTTP endpoints', () => {
   let api;
   let app;
+  let mockDb;
 
   beforeEach(() => {
     api = new CVEScraperAPI();
     app = api.app;
+    mockDb = getDatabase();
+    // Reset rate limiter mock to allow scraping by default
+    mockDb.checkExecutionAllowed.mockReturnValue({ allowed: true, minutesRemaining: 0 });
   });
 
-  // ── Health check ────────────────────────────────────────────────────────────
+  // ── Health check ──────────────────────────────────────────────────────────
   describe('GET /health', () => {
     test('returns 200 with status: healthy', async () => {
       const res = await request(app).get('/health');
@@ -77,7 +116,7 @@ describe('CVEScraperAPI — HTTP endpoints', () => {
     });
   });
 
-  // ── Status ──────────────────────────────────────────────────────────────────
+  // ── Status ────────────────────────────────────────────────────────────────
   describe('GET /api/status', () => {
     test('returns current scraping state', async () => {
       const res = await request(app).get('/api/status');
@@ -88,7 +127,7 @@ describe('CVEScraperAPI — HTTP endpoints', () => {
     });
   });
 
-  // ── POST /api/scrape ────────────────────────────────────────────────────────
+  // ── POST /api/scrape ──────────────────────────────────────────────────────
   describe('POST /api/scrape', () => {
     test('starts a scraping job and returns 200', async () => {
       const res = await request(app)
@@ -100,7 +139,6 @@ describe('CVEScraperAPI — HTTP endpoints', () => {
     });
 
     test('returns 409 when a scrape is already in progress', async () => {
-      // Simulate a job already running
       api.isScrapingInProgress = true;
       api.currentScrapingJob = { id: 'scrape_1', status: 'running' };
 
@@ -110,9 +148,20 @@ describe('CVEScraperAPI — HTTP endpoints', () => {
       expect(res.statusCode).toBe(409);
       expect(res.body.error).toMatch(/already in progress/i);
     });
+
+    test('returns 429 when rate limiter blocks the request', async () => {
+      mockDb.checkExecutionAllowed.mockReturnValueOnce({ allowed: false, minutesRemaining: 45 });
+
+      const res = await request(app)
+        .post('/api/scrape')
+        .send({});
+      expect(res.statusCode).toBe(429);
+      expect(res.body.error).toMatch(/rate limited/i);
+      expect(res.body.minutesRemaining).toBe(45);
+    });
   });
 
-  // ── GET /api/scrape/:jobId ──────────────────────────────────────────────────
+  // ── GET /api/scrape/:jobId ────────────────────────────────────────────────
   describe('GET /api/scrape/:jobId', () => {
     test('returns job details when jobId matches current job', async () => {
       const jobId = 'scrape_12345';
@@ -130,7 +179,7 @@ describe('CVEScraperAPI — HTTP endpoints', () => {
     });
   });
 
-  // ── POST /api/scrape/stop ───────────────────────────────────────────────────
+  // ── POST /api/scrape/stop ─────────────────────────────────────────────────
   describe('POST /api/scrape/stop', () => {
     test('returns 400 when no scrape is running', async () => {
       const res = await request(app).post('/api/scrape/stop');
@@ -152,7 +201,7 @@ describe('CVEScraperAPI — HTTP endpoints', () => {
     });
   });
 
-  // ── POST /api/schedule ──────────────────────────────────────────────────────
+  // ── POST /api/schedule ────────────────────────────────────────────────────
   describe('POST /api/schedule', () => {
     test('creates a schedule with a valid cron expression', async () => {
       const res = await request(app)
@@ -185,7 +234,7 @@ describe('CVEScraperAPI — HTTP endpoints', () => {
     });
   });
 
-  // ── GET /api/schedules ──────────────────────────────────────────────────────
+  // ── GET /api/schedules ────────────────────────────────────────────────────
   describe('GET /api/schedules', () => {
     test('returns empty list initially', async () => {
       const res = await request(app).get('/api/schedules');
@@ -203,7 +252,7 @@ describe('CVEScraperAPI — HTTP endpoints', () => {
     });
   });
 
-  // ── DELETE /api/schedule/:scheduleId ────────────────────────────────────────
+  // ── DELETE /api/schedule/:scheduleId ─────────────────────────────────────
   describe('DELETE /api/schedule/:scheduleId', () => {
     test('deletes an existing schedule', async () => {
       await request(app)
@@ -222,7 +271,52 @@ describe('CVEScraperAPI — HTTP endpoints', () => {
     });
   });
 
-  // ── POST /api/analytics ─────────────────────────────────────────────────────
+  // ── GET /api/cves ─────────────────────────────────────────────────────────
+  describe('GET /api/cves', () => {
+    test('returns CVE list from database', async () => {
+      const res = await request(app).get('/api/cves');
+      expect(res.statusCode).toBe(200);
+      expect(Array.isArray(res.body.cves)).toBe(true);
+      expect(typeof res.body.total).toBe('number');
+      expect(typeof res.body.count).toBe('number');
+    });
+
+    test('passes query params to database', async () => {
+      const res = await request(app).get('/api/cves?severity=HIGH&limit=10');
+      expect(res.statusCode).toBe(200);
+      expect(mockDb.getCVEs).toHaveBeenCalledWith(expect.objectContaining({
+        severity: 'HIGH',
+        limit: 10,
+      }));
+    });
+  });
+
+  // ── GET /api/cves/:cveId ──────────────────────────────────────────────────
+  describe('GET /api/cves/:cveId', () => {
+    test('returns a specific CVE', async () => {
+      const res = await request(app).get('/api/cves/CVE-2025-0001');
+      expect(res.statusCode).toBe(200);
+      expect(res.body.cveId).toBe('CVE-2025-0001');
+    });
+
+    test('returns 404 when CVE is not found', async () => {
+      mockDb.getCVEById.mockReturnValueOnce(null);
+      const res = await request(app).get('/api/cves/CVE-9999-99999');
+      expect(res.statusCode).toBe(404);
+      expect(res.body.error).toMatch(/not found/i);
+    });
+  });
+
+  // ── GET /api/runs ─────────────────────────────────────────────────────────
+  describe('GET /api/runs', () => {
+    test('returns list of scrape runs', async () => {
+      const res = await request(app).get('/api/runs');
+      expect(res.statusCode).toBe(200);
+      expect(Array.isArray(res.body.runs)).toBe(true);
+    });
+  });
+
+  // ── POST /api/analytics ───────────────────────────────────────────────────
   describe('POST /api/analytics', () => {
     test('returns analytics when inline data is provided', async () => {
       const res = await request(app)
@@ -236,42 +330,25 @@ describe('CVEScraperAPI — HTTP endpoints', () => {
                 score: 8.5,
                 technologies: ['Linux'],
                 component: 'kernel',
-                additionalResources: {}
-              }
-            ]
-          }
+                additionalResources: {},
+              },
+            ],
+          },
         });
       expect(res.statusCode).toBe(200);
       expect(res.body.analytics).toBeDefined();
     });
 
-    test('returns analytics when filePath is provided', async () => {
-      const res = await request(app)
-        .post('/api/analytics')
-        .send({ filePath: '/tmp/mock_cve_data.json' });
-      expect(res.statusCode).toBe(200);
-      expect(res.body.analytics).toBeDefined();
-    });
-
-    test('returns 400 when neither filePath nor data is provided', async () => {
+    test('loads CVEs from database when no data provided', async () => {
       const res = await request(app)
         .post('/api/analytics')
         .send({});
-      expect(res.statusCode).toBe(400);
-      expect(res.body.error).toMatch(/filePath or data/i);
-    });
-  });
-
-  // ── GET /api/files ──────────────────────────────────────────────────────────
-  describe('GET /api/files', () => {
-    test('returns a list of output files', async () => {
-      const res = await request(app).get('/api/files');
       expect(res.statusCode).toBe(200);
-      expect(Array.isArray(res.body.files)).toBe(true);
+      expect(res.body.analytics).toBeDefined();
     });
   });
 
-  // ── GET /api/checkpoint ─────────────────────────────────────────────────────
+  // ── GET /api/checkpoint ───────────────────────────────────────────────────
   describe('GET /api/checkpoint', () => {
     test('returns checkpoint information', async () => {
       const res = await request(app).get('/api/checkpoint');
@@ -281,7 +358,7 @@ describe('CVEScraperAPI — HTTP endpoints', () => {
 
     test('returns 404 when no checkpoint exists', async () => {
       const { loadLatestCheckpoint } = require('../src/utils/helpers');
-      loadLatestCheckpoint.mockResolvedValueOnce(null);
+      loadLatestCheckpoint.mockReturnValueOnce(null);
 
       const res = await request(app).get('/api/checkpoint');
       expect(res.statusCode).toBe(404);
@@ -289,7 +366,7 @@ describe('CVEScraperAPI — HTTP endpoints', () => {
     });
   });
 
-  // ── 404 catch-all ───────────────────────────────────────────────────────────
+  // ── 404 catch-all ─────────────────────────────────────────────────────────
   describe('Unknown routes', () => {
     test('returns 404 for unregistered GET route', async () => {
       const res = await request(app).get('/api/does-not-exist');

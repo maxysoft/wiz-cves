@@ -126,11 +126,10 @@ describe('docker-compose.yml', () => {
     expect(env.USER_AGENTS).toBeDefined();
   });
 
-  test('compose defines named volumes for output, logs, checkpoints', () => {
+  test('compose defines named volumes for data and logs', () => {
     expect(compose.volumes).toBeDefined();
-    expect(compose.volumes).toHaveProperty('output');
+    expect(compose.volumes).toHaveProperty('data');
     expect(compose.volumes).toHaveProperty('logs');
-    expect(compose.volumes).toHaveProperty('checkpoints');
   });
 
   test('does not reference a browser/puppeteer service', () => {

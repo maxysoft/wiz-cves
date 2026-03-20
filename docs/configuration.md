@@ -1,10 +1,23 @@
 # Configuration Reference
 
-All configuration is driven by environment variables.  Copy `.env.example` to `.env` and edit it before starting the application.
+All configuration is controlled through environment variables.  Copy `.env.example` to `.env` and edit as needed.
 
-```bash
-cp .env.example .env
-```
+---
+
+## Database
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_PATH` | `data/cve_scraper.db` | Path to the SQLite database file (relative to project root or absolute). The parent directory is created automatically. |
+
+---
+
+## Scheduling
+
+| Variable | Default | Description |
+|---|---|---|
+| `SCRAPER_CRON` | *(empty)* | Standard cron expression for automatic scraping. Leave empty to disable auto-scheduling. Examples: `"0 */6 * * *"` (every 6 h), `"0 2 * * *"` (daily at 02:00). |
+| `MIN_INTERVAL_HOURS` | `1` | Minimum number of hours that must elapse between scrape runs. The hard lower bound is **1 hour** — values below 1 are silently raised to 1. This applies to both API-triggered and cron-triggered runs. |
 
 ---
 
@@ -12,66 +25,42 @@ cp .env.example .env
 
 | Variable | Default | Description |
 |---|---|---|
-| `DELAY_BETWEEN_REQUESTS` | `2000` | Milliseconds to wait between consecutive Algolia API calls |
-| `RETRY_ATTEMPTS` | `5` | Maximum number of retries per API request |
-| `MAX_CONCURRENT_REQUESTS` | `3` | Maximum parallel Algolia requests (comprehensive mode) |
-| `REQUEST_POOL_TIMEOUT` | `120000` | Timeout (ms) for the parallel request pool |
-| `CIRCUIT_BREAKER_THRESHOLD` | `5` | Consecutive failures before the circuit opens |
-| `CIRCUIT_BREAKER_TIMEOUT` | `60000` | Time (ms) the circuit stays open before testing again |
-| `MAX_CVES` | *(unlimited)* | Cap the total number of CVEs to fetch |
-| `TARGET_URL` | `https://www.wiz.io/vulnerability-database/cve/search` | Target URL (informational; scraping is API-based) |
+| `DELAY_BETWEEN_REQUESTS` | `2000` | Milliseconds to wait between Algolia API requests (normal mode). |
+| `RETRY_ATTEMPTS` | `5` | Maximum number of retry attempts per failed request. |
+| `MAX_CONCURRENT_REQUESTS` | `3` | Maximum number of parallel Algolia queries (comprehensive mode). |
+| `CIRCUIT_BREAKER_THRESHOLD` | `5` | Consecutive failures before the circuit breaker opens. |
+| `CIRCUIT_BREAKER_TIMEOUT` | `60000` | Milliseconds before the circuit breaker moves to HALF_OPEN. |
+| `MAX_CVES` | *(unlimited)* | Stop scraping after this many CVEs. |
+| `API_TIMEOUT` | `60000` | HTTP request timeout in milliseconds. |
 
----
+### Gentle mode
 
-## Algolia API
-
-| Variable | Default | Description |
-|---|---|---|
-| `ALGOLIA_API_KEY` | *(public read key)* | Algolia search-only API key |
-| `ALGOLIA_APPLICATION_ID` | `HDR4182JVE` | Algolia application ID |
-| `HITS_PER_PAGE` | `20` | Number of CVEs returned per Algolia page |
-| `MAX_PAGES` | `100` | Maximum number of pages to fetch per query |
-| `API_TIMEOUT` | `60000` | HTTP timeout (ms) for each Algolia request |
-
----
-
-## User-Agent rotation
-
-The scraper sets a `User-Agent` HTTP header on every outbound request, picking one agent at random from the configured list on each call.
+Gentle mode is designed to scrape all CVEs while placing minimal load on the remote API.  It disables parallel processing and uses longer inter-request delays.
 
 | Variable | Default | Description |
 |---|---|---|
-| `USER_AGENTS` | *(built-in list of 5 agents)* | Comma-separated list of user-agent strings. One is chosen at random per request. |
-| `USER_AGENT` | *(none)* | Single user-agent string. Used as a one-element list when `USER_AGENTS` is not set. |
-
-**Precedence**: `USER_AGENTS` > `USER_AGENT` > built-in default list.
-
-**Example**
-
-```dotenv
-USER_AGENTS=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36,Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36
-```
+| `GENTLE_MODE` | `false` | Set to `true` to enable gentle mode. Also available via the `--gentle` CLI flag. |
+| `GENTLE_DELAY_MS` | `5000` | Milliseconds between requests in gentle mode. |
+| `GENTLE_HITS_PER_PAGE` | `10` | Number of results per API page in gentle mode. |
 
 ---
 
-## Output
+## Output / Checkpoints
 
 | Variable | Default | Description |
 |---|---|---|
-| `OUTPUT_DIR` | `./output` | Directory where JSON results are written |
-| `OUTPUT_FILENAME` | `cve_data` | Base filename (timestamp is appended automatically) |
-| `SAVE_CHECKPOINTS` | `true` | Write checkpoint files during a scrape |
-| `CHECKPOINT_INTERVAL` | `100` | Save a checkpoint every N processed CVEs |
+| `SAVE_CHECKPOINTS` | `true` | Persist checkpoints to the database after each batch. Set to `false` to disable. |
+| `CHECKPOINT_INTERVAL` | `100` | Save a checkpoint every N processed CVEs. |
 
 ---
 
-## API server
+## API Server
 
 | Variable | Default | Description |
 |---|---|---|
-| `API_PORT` | `3000` | TCP port the Express server listens on |
-| `API_HOST` | `localhost` | Bind address (use `0.0.0.0` inside Docker) |
-| `ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated CORS origin allow-list |
+| `API_PORT` | `3000` | TCP port the REST API listens on. |
+| `API_HOST` | `localhost` | Hostname or IP address to bind to. Use `0.0.0.0` in Docker. |
+| `ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated list of allowed CORS origins. |
 
 ---
 
@@ -79,9 +68,33 @@ USER_AGENTS=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 
 | Variable | Default | Description |
 |---|---|---|
-| `LOG_LEVEL` | `info` | Winston log level: `error` \| `warn` \| `info` \| `debug` |
-| `LOG_FILE` | `./logs/scraper.log` | Path of the log file (combined) |
-| `NODE_ENV` | *(unset)* | Set to `production` to suppress verbose error details in API responses |
+| `LOG_LEVEL` | `info` | Winston log level (`error`, `warn`, `info`, `debug`, `silly`). |
+| `LOG_FILE` | `./logs/scraper.log` | Path to the combined log file. |
+
+---
+
+## Algolia API
+
+These values are pre-configured for the Wiz CVE database and should not normally need changing.
+
+| Variable | Default | Description |
+|---|---|---|
+| `ALGOLIA_API_KEY` | *(built-in)* | Algolia search-only API key. |
+| `ALGOLIA_APPLICATION_ID` | *(built-in)* | Algolia application ID. |
+| `HITS_PER_PAGE` | `20` | Results per Algolia API page. |
+| `MAX_PAGES` | `100` | Maximum number of pages to fetch (standard mode). |
+| `TARGET_URL` | `https://www.wiz.io/...` | Wiz CVE database URL (used for HTML resource extraction). |
+
+---
+
+## User-agent rotation
+
+| Variable | Description |
+|---|---|
+| `USER_AGENTS` | Comma-separated list of user-agent strings.  One is chosen at random per outbound request. |
+| `USER_AGENT` | Single fallback user-agent string (used only when `USER_AGENTS` is not set). |
+
+If neither variable is set, a built-in list of five browser user-agents is used.
 
 ---
 
@@ -89,7 +102,7 @@ USER_AGENTS=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 
 | Variable | Default | Description |
 |---|---|---|
-| `INCLUDE_DESCRIPTION` | `true` | Include the CVE description field in output |
-| `INCLUDE_AFFECTED_SOFTWARE` | `true` | Include affected-software list in output |
-| `INCLUDE_AFFECTED_TECHNOLOGIES` | `true` | Include affected-technologies list in output |
-| `MAX_DESCRIPTION_LENGTH` | `1000` | Truncate descriptions longer than this many characters |
+| `INCLUDE_DESCRIPTION` | `true` | Include the CVE description field. |
+| `INCLUDE_AFFECTED_SOFTWARE` | `true` | Include affected software data. |
+| `INCLUDE_AFFECTED_TECHNOLOGIES` | `true` | Include affected technologies data. |
+| `MAX_DESCRIPTION_LENGTH` | `1000` | Truncate descriptions longer than this. |

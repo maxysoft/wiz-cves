@@ -13,19 +13,24 @@ services:
       API_HOST: "0.0.0.0"
       API_PORT: "3000"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
-      OUTPUT_DIR: /app/output
+      DATABASE_PATH: /app/data/cve_scraper.db
       DELAY_BETWEEN_REQUESTS: "${DELAY_BETWEEN_REQUESTS:-2000}"
       RETRY_ATTEMPTS: "${RETRY_ATTEMPTS:-5}"
       MAX_CONCURRENT_REQUESTS: "${MAX_CONCURRENT_REQUESTS:-3}"
       SAVE_CHECKPOINTS: "${SAVE_CHECKPOINTS:-true}"
       CHECKPOINT_INTERVAL: "${CHECKPOINT_INTERVAL:-100}"
       TARGET_URL: "${TARGET_URL:-https://www.wiz.io/vulnerability-database/cve/search}"
+      # Cron expression for automatic scraping (e.g. "0 */6 * * *" = every 6 h)
+      SCRAPER_CRON: "${SCRAPER_CRON:-}"
+      # Minimum hours between scrape runs — hard lower bound is 1
+      MIN_INTERVAL_HOURS: "${MIN_INTERVAL_HOURS:-1}"
+      # Enable gentle mode to reduce API load (true/false)
+      GENTLE_MODE: "${GENTLE_MODE:-false}"
       # Comma-separated list of user-agent strings rotated randomly per request
       USER_AGENTS: "${USER_AGENTS:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36,Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36,Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36,Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0}"
     volumes:
-      - output:/app/output
+      - data:/app/data
       - logs:/app/logs
-      - checkpoints:/app/checkpoints
     healthcheck:
       test: ["CMD", "wget", "-q", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
       interval: 30s
@@ -34,6 +39,5 @@ services:
       start_period: 30s
 
 volumes:
-  output:
+  data:
   logs:
-  checkpoints:

@@ -1,53 +1,57 @@
 const fs = require('fs-extra');
-const path = require('path');
 const Joi = require('joi');
 const logger = require('./logger');
 const config = require('../config');
+const { getDatabase } = require('./database');
+
+// ── Timing & retry ───────────────────────────────────────────────────────────
 
 /**
- * Sleep for a specified number of milliseconds
- * @param {number} ms - Milliseconds to sleep
+ * Sleep for a specified number of milliseconds.
+ * @param {number} ms
  * @returns {Promise<void>}
  */
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Retry a function with exponential backoff
- * @param {Function} fn - Function to retry
- * @param {number} maxAttempts - Maximum number of attempts
- * @param {number} baseDelay - Base delay in milliseconds
+ * Retry a function with exponential backoff.
+ * @param {Function} fn
+ * @param {number} maxAttempts
+ * @param {number} baseDelay  Base delay in ms (doubles each retry).
  * @returns {Promise<any>}
  */
 const retryWithBackoff = async (fn, maxAttempts = 3, baseDelay = 1000) => {
   let lastError;
-  
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await fn();
     } catch (error) {
       lastError = error;
-      
+
       if (attempt === maxAttempts) {
         throw error;
       }
-      
+
       const delay = baseDelay * Math.pow(2, attempt - 1);
       logger.warn(`Attempt ${attempt} failed, retrying in ${delay}ms`, {
         error: error.message,
         attempt,
         maxAttempts
       });
-      
+
       await sleep(delay);
     }
   }
-  
+
   throw lastError;
 };
 
+// ── File-system helpers ──────────────────────────────────────────────────────
+
 /**
- * Ensure directory exists
- * @param {string} dirPath - Directory path
+ * Ensure a directory exists, creating it recursively if necessary.
+ * @param {string} dirPath
  */
 const ensureDir = async (dirPath) => {
   try {
@@ -58,128 +62,100 @@ const ensureDir = async (dirPath) => {
   }
 };
 
-/**
- * Save data to JSON file with backup
- * @param {string} filename - Filename without extension
- * @param {Object} data - Data to save
- * @param {string} outputDir - Output directory
- * @param {boolean} useTimestampedFolder - Whether to create timestamped subfolder
- * @returns {Promise<string>} - Full path of saved file
- */
-const saveToJson = async (filename, data, outputDir = config.output.dir, useTimestampedFolder = false) => {
-  let finalOutputDir = outputDir;
+// ── Database-backed persistence ───────────────────────────────────────────────
 
-  if (useTimestampedFolder) {
-    const isoDate = new Date().toISOString().replace(/[:.]/g, '-');
-    const tsFolder = `${isoDate.split('T')[0]}_${isoDate.split('T')[1].split('.')[0]}`;
-    finalOutputDir = path.join(outputDir, `scrape_${tsFolder}`);
-  }
-  
-  await ensureDir(finalOutputDir);
-  
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const fullFilename = `${filename}_${timestamp}.json`;
-  const filePath = path.join(finalOutputDir, fullFilename);
-  
+/**
+ * Save an array of CVE objects to the SQLite database.
+ *
+ * @param {Array<Object>} cves
+ * @returns {number} Number of CVEs saved.
+ */
+const saveCVEsToDatabase = (cves) => {
   try {
-    await fs.writeJson(filePath, data, { spaces: 2 });
-    logger.info(`Data saved to: ${filePath}`);
-    
-    // Also save as latest in the main output directory
-    const latestPath = path.join(outputDir, `${filename}_latest.json`);
-    await fs.writeJson(latestPath, data, { spaces: 2 });
-    
-    return filePath;
+    const db = getDatabase();
+    const count = db.saveCVEs(cves);
+    logger.info(`Saved ${count} CVEs to database`);
+    return count;
   } catch (error) {
-    logger.error(`Failed to save data to: ${filePath}`, error);
+    logger.error('Failed to save CVEs to database', error);
     throw error;
   }
 };
 
 /**
- * Load data from JSON file
- * @param {string} filePath - File path
- * @returns {Promise<Object>} - Loaded data
+ * Load CVEs from the SQLite database with optional filters.
+ *
+ * @param {Object} [filters]
+ * @param {string} [filters.severity]
+ * @param {string} [filters.search]
+ * @param {number} [filters.limit=100]
+ * @param {number} [filters.offset=0]
+ * @returns {Array<Object>}
  */
-const loadFromJson = async (filePath) => {
+const loadCVEsFromDatabase = (filters = {}) => {
   try {
-    const data = await fs.readJson(filePath);
-    logger.info(`Data loaded from: ${filePath}`);
-    return data;
+    const db = getDatabase();
+    return db.getCVEs(filters);
   } catch (error) {
-    logger.error(`Failed to load data from: ${filePath}`, error);
+    logger.error('Failed to load CVEs from database', error);
     throw error;
   }
 };
 
 /**
- * Save checkpoint data
- * @param {Array} processedCVEs - Processed CVE data
- * @param {number} currentIndex - Current processing index
- * @returns {Promise<string>} - Checkpoint file path
+ * Save a checkpoint to the SQLite database.
+ *
+ * @param {Array<Object>} processedCVEs
+ * @param {number}        currentIndex
+ * @returns {number|null} Row ID of the saved checkpoint, or null when
+ *   checkpoints are disabled in config.
  */
-const saveCheckpoint = async (processedCVEs, currentIndex) => {
+const saveCheckpoint = (processedCVEs, currentIndex) => {
   if (!config.output.saveCheckpoints) {
     return null;
   }
-  
-  await ensureDir(config.paths.checkpoints);
-  
-  const checkpoint = {
-    timestamp: new Date().toISOString(),
-    processedCount: processedCVEs.length,
-    currentIndex,
-    data: processedCVEs
-  };
-  
-  const filename = `checkpoint_${Date.now()}.json`;
-  const filePath = path.join(config.paths.checkpoints, filename);
-  
-  await fs.writeJson(filePath, checkpoint, { spaces: 2 });
-  logger.checkpoint(processedCVEs.length, filename);
-  
-  return filePath;
-};
 
-/**
- * Load latest checkpoint
- * @returns {Promise<Object|null>} - Checkpoint data or null
- */
-const loadLatestCheckpoint = async () => {
   try {
-    const checkpointDir = config.paths.checkpoints;
-    const files = await fs.readdir(checkpointDir);
-    const checkpointFiles = files
-      .filter(file => file.startsWith('checkpoint_') && file.endsWith('.json'))
-      .sort((a, b) => {
-        const timeA = parseInt(a.replace('checkpoint_', '').replace('.json', ''), 10);
-        const timeB = parseInt(b.replace('checkpoint_', '').replace('.json', ''), 10);
-        return timeB - timeA;
-      });
-    
-    if (checkpointFiles.length === 0) {
-      return null;
-    }
-    
-    const latestFile = path.join(checkpointDir, checkpointFiles[0]);
-    const checkpoint = await loadFromJson(latestFile);
-    
-    logger.info(`Loaded checkpoint: ${checkpointFiles[0]}`, {
-      processedCount: checkpoint.processedCount,
-      timestamp: checkpoint.timestamp
-    });
-    
-    return checkpoint;
+    const db = getDatabase();
+    const rowId = db.saveCheckpoint(processedCVEs, currentIndex);
+    logger.checkpoint(processedCVEs.length, `db:checkpoints#${rowId}`);
+    return rowId;
   } catch (error) {
-    logger.warn('Failed to load checkpoint', error);
-    return null;
+    logger.error('Failed to save checkpoint to database', error);
+    throw error;
   }
 };
 
 /**
- * Validate CVE data structure
- * @param {Object} cveData - CVE data to validate
- * @returns {Object} - Validation result
+ * Load the latest checkpoint from the SQLite database.
+ *
+ * @returns {Object|null}
+ */
+const loadLatestCheckpoint = () => {
+  try {
+    const db = getDatabase();
+    const checkpoint = db.getLatestCheckpoint();
+
+    if (checkpoint) {
+      logger.info('Loaded checkpoint from database', {
+        processedCount: checkpoint.processedCount,
+        timestamp: checkpoint.timestamp
+      });
+    }
+
+    return checkpoint;
+  } catch (error) {
+    logger.warn('Failed to load checkpoint from database', error);
+    return null;
+  }
+};
+
+// ── CVE validation ────────────────────────────────────────────────────────────
+
+/**
+ * Validate a single CVE data object against the Joi schema.
+ * @param {Object} cveData
+ * @returns {{ error?: ValidationError, value: Object }}
  */
 const validateCVEData = (cveData) => {
   const schema = Joi.object({
@@ -212,20 +188,23 @@ const validateCVEData = (cveData) => {
       Joi.object()
     ).default([])
   });
-  
+
   return schema.validate(cveData, { allowUnknown: true });
 };
 
+// ── Text utilities ────────────────────────────────────────────────────────────
+
 /**
- * Clean and normalize text
- * @param {string} text - Text to clean
- * @returns {string} - Cleaned text
+ * Collapse whitespace and control characters in a string.
+ * Returns an empty string for null / undefined / non-string values.
+ * @param {string} text
+ * @returns {string}
  */
 const cleanText = (text) => {
   if (!text || typeof text !== 'string') {
     return '';
   }
-  
+
   return text
     .trim()
     .replace(/\s+/g, ' ')
@@ -234,12 +213,15 @@ const cleanText = (text) => {
 };
 
 /**
- * Parse CVSS score from text
- * @param {string} scoreText - Score text
- * @returns {number|null} - Parsed score
+ * Extract a numeric CVSS score (0–10) from a free-form string or number.
+ * Returns null if the value cannot be parsed or is out of range.
+ * @param {string|number} scoreText
+ * @returns {number|null}
  */
 const parseCVSSScore = (scoreText) => {
-  if (!scoreText) { return null; }
+  if (scoreText === null || scoreText === undefined || scoreText === '') {
+    return null;
+  }
 
   const match = scoreText.toString().match(/\d+\.?\d*/);
   if (match) {
@@ -250,10 +232,13 @@ const parseCVSSScore = (scoreText) => {
   return null;
 };
 
+// ── Analytics ─────────────────────────────────────────────────────────────────
+
 /**
- * Generate analytics from CVE data
- * @param {Array} cveData - Array of CVE objects
- * @returns {Object} - Analytics data
+ * Generate summary statistics from an array of CVE objects.
+ *
+ * @param {Array<Object>} cveData
+ * @returns {Object}
  */
 const generateAnalytics = (cveData) => {
   const analytics = {
@@ -274,22 +259,20 @@ const generateAnalytics = (cveData) => {
     withAdditionalResources: 0,
     averageScore: 0
   };
-  
+
   let totalScore = 0;
   let scoreCount = 0;
-  
+
   cveData.forEach(cve => {
-    // Severity distribution
     if (cve.severity) {
-      analytics.severityDistribution[cve.severity] = 
+      analytics.severityDistribution[cve.severity] =
         (analytics.severityDistribution[cve.severity] || 0) + 1;
     }
-    
-    // Score distribution — only count numeric scores; 'N/A' and null are skipped
+
     if (typeof cve.score === 'number' && !isNaN(cve.score)) {
       totalScore += cve.score;
       scoreCount++;
-      
+
       if (cve.score < 3) {
         analytics.scoreDistribution['0-3']++;
       } else if (cve.score < 7) {
@@ -300,32 +283,29 @@ const generateAnalytics = (cveData) => {
         analytics.scoreDistribution['9-10']++;
       }
     }
-    
-    // Technologies
-    if (cve.technologies && Array.isArray(cve.technologies)) {
+
+    if (Array.isArray(cve.technologies)) {
       cve.technologies.forEach(tech => {
         analytics.topTechnologies[tech] = (analytics.topTechnologies[tech] || 0) + 1;
       });
     }
-    
-    // Components
+
     if (cve.component) {
-      analytics.topComponents[cve.component] = 
+      analytics.topComponents[cve.component] =
         (analytics.topComponents[cve.component] || 0) + 1;
     }
-    
-    // Additional resources
-    if (cve.additionalResources && 
-        cve.additionalResources.externalLinks && 
-        cve.additionalResources.externalLinks.length > 0) {
+
+    if (
+      cve.additionalResources &&
+      cve.additionalResources.externalLinks &&
+      cve.additionalResources.externalLinks.length > 0
+    ) {
       analytics.withAdditionalResources++;
     }
   });
-  
-  // Calculate average score
+
   analytics.averageScore = scoreCount > 0 ? (totalScore / scoreCount).toFixed(2) : 0;
-  
-  // Sort top technologies and components
+
   analytics.topTechnologies = Object.entries(analytics.topTechnologies)
     .sort(([, a], [, b]) => b - a)
     .slice(0, 10)
@@ -335,63 +315,26 @@ const generateAnalytics = (cveData) => {
     .sort(([, a], [, b]) => b - a)
     .slice(0, 10)
     .reduce((obj, [key, value]) => ({ ...obj, [key]: value }), {});
-  
+
   return analytics;
 };
 
-/**
- * Save text data to file
- * @param {string} data - Text data to save
- * @param {string} filename - Base filename (without extension)
- * @param {string} outputDir - Output directory
- * @param {boolean} useTimestampedFolder - Whether to use timestamped folder
- * @returns {Promise<string>} - File path
- */
-const saveToTextFile = async (data, filename, outputDir = config.output.dir, useTimestampedFolder = true) => {
-  let finalOutputDir = outputDir;
-
-  if (useTimestampedFolder) {
-    const isoDate = new Date().toISOString().replace(/[:.]/g, '-');
-    const tsFolder = `${isoDate.split('T')[0]}_${isoDate.split('T')[1].split('.')[0]}`;
-    finalOutputDir = path.join(outputDir, `scrape_${tsFolder}`);
-  }
-  
-  await ensureDir(finalOutputDir);
-  
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const fullFilename = `${filename}_${timestamp}.txt`;
-  const filePath = path.join(finalOutputDir, fullFilename);
-  
-  try {
-    await fs.writeFile(filePath, data, 'utf8');
-    logger.info(`Text data saved to: ${filePath}`);
-    
-    // Also save as latest in the main output directory
-    const latestPath = path.join(outputDir, `${filename}_latest.txt`);
-    await fs.writeFile(latestPath, data, 'utf8');
-    
-    return filePath;
-  } catch (error) {
-    logger.error(`Failed to save text data to: ${filePath}`, error);
-    throw error;
-  }
-};
+// ── URL utilities ─────────────────────────────────────────────────────────────
 
 /**
- * Extract and process external URLs from CVE data
- * @param {Array} cveData - Array of CVE objects
- * @returns {Array} - Array of unique base URLs
+ * Extract and deduplicate base-domain URLs from CVE data.
+ *
+ * @param {Array<Object>} cveData
+ * @returns {Array<string>} Sorted, unique base URLs (scheme + hostname).
  */
 const extractBaseUrls = (cveData) => {
   const allUrls = new Set();
-  
+
   cveData.forEach(cve => {
-    // Extract from sourceUrl
     if (cve.sourceUrl) {
       allUrls.add(cve.sourceUrl);
     }
-    
-    // Extract from additionalResources.externalLinks
+
     if (cve.additionalResources && cve.additionalResources.externalLinks) {
       cve.additionalResources.externalLinks.forEach(link => {
         if (link.url) {
@@ -400,19 +343,17 @@ const extractBaseUrls = (cveData) => {
       });
     }
   });
-  
-  // Convert URLs to base domains
+
   const baseUrls = new Set();
   allUrls.forEach(url => {
     try {
       const urlObj = new URL(url);
-      const baseUrl = `${urlObj.protocol}//${urlObj.hostname}`;
-      baseUrls.add(baseUrl);
-    } catch (_unused) {
+      baseUrls.add(`${urlObj.protocol}//${urlObj.hostname}`);
+    } catch {
       logger.warn(`Invalid URL encountered: ${url}`);
     }
   });
-  
+
   return Array.from(baseUrls).sort();
 };
 
@@ -420,9 +361,8 @@ module.exports = {
   sleep,
   retryWithBackoff,
   ensureDir,
-  saveToJson,
-  saveToTextFile,
-  loadFromJson,
+  saveCVEsToDatabase,
+  loadCVEsFromDatabase,
   saveCheckpoint,
   loadLatestCheckpoint,
   validateCVEData,
