@@ -551,8 +551,8 @@ class WizCVEScraper {
     successfulResults.forEach(result => {
       if (result.data && Array.isArray(result.data)) {
         result.data.forEach(cve => {
-          if (cve && cve.id) {
-            allCVEs.set(cve.id, cve);
+          if (cve && cve.cveId) {
+            allCVEs.set(cve.cveId, cve);
           }
         });
       }
@@ -615,7 +615,7 @@ class WizCVEScraper {
             const cveData = await this.transformAlgoliaHitToCVE(hit);
             if (cveData && validateCVEData(cveData)) {
               // Store in local map first
-              localCVEs.set(cveData.id, cveData);
+              localCVEs.set(cveData.cveId, cveData);
             }
             
             // Add small delay between CVE detail page requests
@@ -733,7 +733,7 @@ class WizCVEScraper {
       const additionalResourcesFromPage = await this.extractAdditionalResources(cveId);
       
       return {
-        id: cveId,
+        cveId,
         severity: hit.severity || 'N/A',
         score: hit.cvssScore || hit.score || 'N/A',
         technologies: hit.affectedTechnologies ? 
@@ -741,7 +741,7 @@ class WizCVEScraper {
         component: hit.affectedSoftware ? 
           hit.affectedSoftware.slice(0, 3).join(', ') + 
           (hit.affectedSoftware.length > 3 ? '...' : '') : 'N/A',
-        publishDate: hit.publishedAt ? new Date(hit.publishedAt).toISOString().split('T')[0] : 'N/A',
+        publishedDate: hit.publishedAt ? new Date(hit.publishedAt).toISOString().split('T')[0] : 'N/A',
         description: cleanText(hit.description || ''),
         sourceUrl: hit.sourceUrl || '',
         hasCisaKevExploit: hit.hasCisaKevExploit || false,
@@ -778,12 +778,12 @@ class WizCVEScraper {
       // Just validate the data
       const validation = validateCVEData(cve);
       if (validation.error) {
-        logger.warn(`CVE validation failed for ${cve.id}:`, validation.error.message);
+        logger.warn(`CVE validation failed for ${cve.cveId}:`, validation.error.message);
         // Use the original data even if validation fails
       }
       return cve;
     } catch (error) {
-      logger.error(`Error processing CVE ${cve.id}:`, error);
+      logger.error(`Error processing CVE ${cve.cveId}:`, error);
       return cve;
     }
   }
@@ -822,7 +822,7 @@ class WizCVEScraper {
           this.processedCount++;
           
           if (logger.cveProcessed) {
-            logger.cveProcessed(cve.id, this.processedCount, cveList.length);
+            logger.cveProcessed(cve.cveId, this.processedCount, cveList.length);
           }
           
           // Save checkpoint periodically
@@ -832,7 +832,7 @@ class WizCVEScraper {
           
         } catch (error) {
           if (logger.cveError) {
-            logger.cveError(cve.id, error);
+            logger.cveError(cve.cveId, error);
           }
           // Return the original CVE data
           processedCVEs.push(cve);
@@ -847,7 +847,7 @@ class WizCVEScraper {
       return {
         scrapeDate: new Date().toISOString(),
         totalCVEs: processedCVEs.length,
-        cveData: processedCVEs.sort((a, b) => a.id.localeCompare(b.id))
+        cveData: processedCVEs.sort((a, b) => a.cveId.localeCompare(b.cveId))
       };
       
     } catch (error) {

@@ -1,5 +1,7 @@
 # Wiz CVE Scraper
 
+[![Built with Claude Sonnet](https://img.shields.io/badge/Built%20with-Claude%20Sonnet-6B4FBB?style=flat&logo=anthropic&logoColor=white)](https://www.anthropic.com)
+
 A production-grade Node.js tool that extracts CVE data from the [Wiz vulnerability database](https://www.wiz.io/vulnerability-database/cve/search) via the Algolia API.  It provides both a **CLI** and a **REST API**, with checkpointing, analytics generation, and per-request user-agent rotation.
 
 ## Features

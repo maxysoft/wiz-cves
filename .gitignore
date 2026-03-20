@@ -168,13 +168,7 @@ screenshots/
 *.cert
 
 # Docker
-Dockerfile
-.dockerignore
-docker-compose.yml
-
-# Kubernetes
-*.yaml
-*.yml
+.local-chromium/
 
 # Terraform
 *.tfstate

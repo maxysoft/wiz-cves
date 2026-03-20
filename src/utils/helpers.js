@@ -184,21 +184,36 @@ const loadLatestCheckpoint = async () => {
 const validateCVEData = (cveData) => {
   const schema = Joi.object({
     cveId: Joi.string().pattern(/^CVE-\d{4}-\d+$/).required(),
-    severity: Joi.string().valid('LOW', 'MEDIUM', 'HIGH', 'CRITICAL').allow(''),
-    score: Joi.number().min(0).max(10).allow(null),
-    technologies: Joi.array().items(Joi.string()).default([]),
-    component: Joi.string().allow(''),
-    publishedDate: Joi.string().allow(''),
-    detailUrl: Joi.string().uri().allow(''),
-    additionalResources: Joi.array().items(
-      Joi.object({
-        title: Joi.string().required(),
-        url: Joi.string().uri().required()
-      })
+    severity: Joi.string().valid('LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'N/A').allow(''),
+    score: Joi.alternatives().try(
+      Joi.number().min(0).max(10),
+      Joi.string().allow('N/A', '')
+    ).allow(null),
+    technologies: Joi.alternatives().try(
+      Joi.array().items(Joi.string()),
+      Joi.string()
+    ).default([]),
+    component: Joi.string().allow('', null),
+    publishedDate: Joi.string().allow('', null),
+    detailUrl: Joi.string().allow('', null),
+    description: Joi.string().allow('', null),
+    sourceUrl: Joi.string().allow('', null),
+    hasCisaKevExploit: Joi.boolean().default(false),
+    hasFix: Joi.boolean().default(false),
+    isHighProfileThreat: Joi.boolean().default(false),
+    exploitable: Joi.boolean().default(false),
+    additionalResources: Joi.alternatives().try(
+      Joi.array().items(
+        Joi.object({
+          title: Joi.string().required(),
+          url: Joi.string().uri().required()
+        })
+      ),
+      Joi.object()
     ).default([])
   });
   
-  return schema.validate(cveData);
+  return schema.validate(cveData, { allowUnknown: true });
 };
 
 /**
