@@ -8,7 +8,7 @@
     "dev": "node --inspect src/app.js",
     "test": "jest",
     "test:watch": "jest --watch",
-    "lint": "eslint src/**/*.js",
+    "lint": "eslint src/",
     "scrape": "node src/scraper.js",
     "api": "node src/api.js"
   },
@@ -24,15 +24,15 @@
   "license": "MIT",
   "dependencies": {
     "axios": "^1.6.0",
-    "commander": "^11.0.0",
+    "commander": "^14.0.3",
     "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
     "fs-extra": "^11.2.0",
-    "helmet": "^7.1.0",
-    "joi": "^17.11.0",
-    "node-cron": "^3.0.3",
-    "p-limit": "^3.1.0",
+    "helmet": "^8.1.0",
+    "joi": "^18.0.2",
+    "node-cron": "^4.2.1",
+    "p-limit": "^7.3.0",
     "progress": "^2.0.3",
     "puppeteer": "^24.11.2",
     "winston": "^3.11.0"
@@ -40,15 +40,14 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.1.0",
-    "eslint-config-standard": "^17.1.0",
-    "eslint-plugin-import": "^2.29.1",
     "eslint-plugin-n": "^17.24.0",
     "eslint-plugin-promise": "^7.2.1",
-    "jest": "^29.7.0",
+    "globals": "^17.4.0",
+    "jest": "^30.3.0",
     "supertest": "^7.2.2"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   },
   "repository": {
     "type": "git",

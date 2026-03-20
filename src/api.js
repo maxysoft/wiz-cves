@@ -80,7 +80,7 @@ class CVEScraperAPI {
     });
 
     // Start scraping operation
-    this.app.post('/api/scrape', async (req, res) => {
+    this.app.post('/api/scrape', (req, res) => {
       try {
         if (this.isScrapingInProgress) {
           return res.status(409).json({
@@ -262,10 +262,10 @@ class CVEScraperAPI {
         
         let cveData;
         if (filePath) {
-          const fileData = await loadFromJson(path.resolve(filePath));
-          cveData = fileData.cveData;
+          const { cveData: fileCveData } = await loadFromJson(path.resolve(filePath));
+          cveData = fileCveData;
         } else if (data && data.cveData) {
-          cveData = data.cveData;
+          ({ cveData } = data);
         } else {
           return res.status(400).json({
             error: 'Either filePath or data must be provided'
@@ -363,7 +363,7 @@ class CVEScraperAPI {
     });
 
     // Global error handler
-    this.app.use((error, req, res, next) => {
+    this.app.use((error, req, res, _next) => {
       logger.error('API Error:', error);
       
       res.status(error.status || 500).json({
@@ -425,8 +425,8 @@ class CVEScraperAPI {
   }
 
   async start() {
-    const port = config.api.port;
-    const host = config.api.host;
+    const { port } = config.api;
+    const { host } = config.api;
     
     // Ensure required directories exist
     await fs.ensureDir(config.paths.output);
@@ -435,16 +435,16 @@ class CVEScraperAPI {
     
     this.app.listen(port, host, () => {
       logger.info(`CVE Scraper API server started on http://${host}:${port}`);
-      console.log(`\n🚀 CVE Scraper API is running!`);
+      console.log('\n🚀 CVE Scraper API is running!');
       console.log(`📡 Server: http://${host}:${port}`);
       console.log(`📊 Health Check: http://${host}:${port}/health`);
       console.log(`📁 Output Files: http://${host}:${port}/output`);
-      console.log(`\n📖 API Endpoints:`);
-      console.log(`   POST /api/scrape - Start scraping`);
-      console.log(`   GET  /api/status - Get status`);
-      console.log(`   POST /api/schedule - Schedule scraping`);
-      console.log(`   POST /api/analytics - Generate analytics`);
-      console.log(`   GET  /api/files - List output files`);
+      console.log('\n📖 API Endpoints:');
+      console.log('   POST /api/scrape - Start scraping');
+      console.log('   GET  /api/status - Get status');
+      console.log('   POST /api/schedule - Schedule scraping');
+      console.log('   POST /api/analytics - Generate analytics');
+      console.log('   GET  /api/files - List output files');
     });
   }
 }

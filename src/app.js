@@ -4,7 +4,7 @@ const path = require('path');
 const { Command } = require('commander');
 const WizCVEScraper = require('./scraper/WizCVEScraper');
 const logger = require('./utils/logger');
-const { saveToJson, saveToTextFile, loadLatestCheckpoint, generateAnalytics, extractBaseUrls } = require('./utils/helpers');
+const { saveToJson, saveToTextFile, loadFromJson, loadLatestCheckpoint, generateAnalytics, extractBaseUrls, saveCheckpoint } = require('./utils/helpers');
 const config = require('./config');
 
 // Handle uncaught exceptions
@@ -38,69 +38,63 @@ const gracefulShutdown = async (signal) => {
       logger.info('Saving current progress before shutdown...');
       
       // Save checkpoint if we have any data
-       let dataToSave = [];
-       
-       // Check for completed CVE data first
-       if (appInstance.scraper.cveData && appInstance.scraper.cveData.length > 0) {
-         dataToSave = appInstance.scraper.cveData;
-         logger.info(`Found completed CVE data: ${dataToSave.length} CVEs`);
-       }
-       // If no completed data, check for intermediate data in the scraper's internal state
-       else if (appInstance.scraper.getAllCollectedCVEs) {
-         dataToSave = appInstance.scraper.getAllCollectedCVEs();
-         logger.info(`Found intermediate CVE data: ${dataToSave.length} CVEs`);
-       }
-       
-       if (dataToSave.length > 0) {
-         const { saveCheckpoint, saveToJson } = require('./utils/helpers');
-         const config = require('./config');
-         
-         try {
-           // Save checkpoint
-           await saveCheckpoint(dataToSave, appInstance.scraper.processedCount || dataToSave.length);
-           logger.info(`Checkpoint saved with ${dataToSave.length} CVEs`);
+      let dataToSave = [];
+
+      // Check for completed CVE data first
+      if (appInstance.scraper.cveData && appInstance.scraper.cveData.length > 0) {
+        dataToSave = appInstance.scraper.cveData;
+        logger.info(`Found completed CVE data: ${dataToSave.length} CVEs`);
+      } else if (appInstance.scraper.getAllCollectedCVEs) {
+        dataToSave = appInstance.scraper.getAllCollectedCVEs();
+        logger.info(`Found intermediate CVE data: ${dataToSave.length} CVEs`);
+      }
+
+      if (dataToSave.length > 0) {
+        try {
+          // Save checkpoint
+          await saveCheckpoint(dataToSave, appInstance.scraper.processedCount || dataToSave.length);
+          logger.info(`Checkpoint saved with ${dataToSave.length} CVEs`);
            
-           // Save partial results with analytics
-           const partialResult = {
-             scrapeDate: new Date().toISOString(),
-             totalCVEs: dataToSave.length,
-             cveData: dataToSave,
-             metadata: {
-               processedCount: appInstance.scraper.processedCount || dataToSave.length,
-               interruptedAt: new Date().toISOString(),
-               isPartialResult: true,
-               stats: appInstance.scraper.getStats()
-             }
-           };
+          // Save partial results with analytics
+          const partialResult = {
+            scrapeDate: new Date().toISOString(),
+            totalCVEs: dataToSave.length,
+            cveData: dataToSave,
+            metadata: {
+              processedCount: appInstance.scraper.processedCount || dataToSave.length,
+              interruptedAt: new Date().toISOString(),
+              isPartialResult: true,
+              stats: appInstance.scraper.getStats()
+            }
+          };
            
-           // Save main data file
-           const outputPath = await saveToJson('cve_data', partialResult, config.output.dir, true);
-           logger.info(`CVE data saved to: ${outputPath}`);
+          // Save main data file
+          const outputPath = await saveToJson('cve_data', partialResult, config.output.dir, true);
+          logger.info(`CVE data saved to: ${outputPath}`);
            
-           // Generate and save analytics
-           const { generateAnalytics } = require('./utils/helpers');
-           const analytics = generateAnalytics(dataToSave);
-           const analyticsPath = await saveToJson('cve_data_analytics', analytics, config.output.dir, true);
-           logger.info(`Analytics saved to: ${analyticsPath}`);
+          // Generate and save analytics
+          const analytics = generateAnalytics(dataToSave);
+          const analyticsPath = await saveToJson('cve_data_analytics', analytics, config.output.dir, true);
+          logger.info(`Analytics saved to: ${analyticsPath}`);
            
-           // Extract and save base URLs from external links
-           logger.info('Extracting base URLs from external links...');
-           const baseUrls = extractBaseUrls(dataToSave);
+          // Extract and save base URLs from external links
+          logger.info('Extracting base URLs from external links...');
+          const baseUrls = extractBaseUrls(dataToSave);
            
-           if (baseUrls.length > 0) {
-             const urlsText = baseUrls.join('\n');
-             await saveToTextFile(urlsText, 'external_base_urls', config.output.dir, true);
-             logger.info(`Extracted and saved ${baseUrls.length} unique base URLs during graceful shutdown`);
-           } else {
-             logger.info('No external URLs found to extract during graceful shutdown');
-           }
+          if (baseUrls.length > 0) {
+            const urlsText = baseUrls.join('\n');
+            await saveToTextFile(urlsText, 'external_base_urls', config.output.dir, true);
+            logger.info(`Extracted and saved ${baseUrls.length} unique base URLs during graceful shutdown`);
+          } else {
+            logger.info('No external URLs found to extract during graceful shutdown');
+          }
            
-         } catch (saveError) {
-           logger.error('Error saving data during graceful shutdown:', saveError);
-         }
-       } else {
-         logger.info('No CVE data collected yet, skipping checkpoint save');
-       }
+        } catch (saveError) {
+          logger.error('Error saving data during graceful shutdown:', saveError);
+        }
+      } else {
+        logger.info('No CVE data collected yet, skipping checkpoint save');
+      }
       
       // Cleanup scraper resources
       await appInstance.scraper.cleanup();
@@ -237,8 +231,8 @@ class CVEScraperApp {
   async handleAnalyticsCommand(file, options) {
     try {
       logger.info(`Generating analytics for file: ${file}`);
-      
-      const data = require(path.resolve(file));
+
+      const data = await loadFromJson(path.resolve(file));
       
       if (!data.cveData || !Array.isArray(data.cveData)) {
         throw new Error('Invalid CVE data file format');
@@ -274,8 +268,8 @@ class CVEScraperApp {
   async handleValidateCommand(file) {
     try {
       logger.info(`Validating file: ${file}`);
-      
-      const data = require(path.resolve(file));
+
+      const data = await loadFromJson(path.resolve(file));
       
       // Basic structure validation
       const requiredFields = ['scrapeDate', 'totalCVEs', 'cveData'];
@@ -349,7 +343,7 @@ class CVEScraperApp {
     const durationSeconds = (duration / 1000).toFixed(2);
     const avgTimePerCVE = result.totalCVEs > 0 ? (duration / result.totalCVEs).toFixed(2) : 0;
     
-    console.log('\n' + '='.repeat(50));
+    console.log(`\n${'='.repeat(50)}`);
     console.log('           SCRAPING SUMMARY');
     console.log('='.repeat(50));
     console.log(`Total CVEs Processed: ${result.totalCVEs}`);
