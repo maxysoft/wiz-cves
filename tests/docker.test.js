@@ -65,8 +65,13 @@ describe('Dockerfile', () => {
     expect(content).toMatch(/^HEALTHCHECK\s+/m);
   });
 
-  test('starts the API server via CMD', () => {
-    expect(content).toMatch(/src\/api\.js/);
+  test('starts the API server via entrypoint or CMD', () => {
+    // entrypoint.sh must exist (Dockerfile copies and invokes it)
+    expect(fileExists('entrypoint.sh')).toBe(true);
+    const entrypointContent = readFile('entrypoint.sh');
+    // The launch command (src/api.js) may be in the Dockerfile CMD/ENTRYPOINT
+    // or delegated to entrypoint.sh – check both.
+    expect(content + entrypointContent).toMatch(/src\/api\.js/);
   });
 
   test('does not reference puppeteer', () => {
@@ -98,12 +103,9 @@ describe('docker-compose.yml', () => {
     expect(compose.services).toHaveProperty('api');
   });
 
-  test('api service builds from the root Dockerfile', () => {
-    const build = compose.services.api.build;
-    expect(build).toBeDefined();
-    // context should be the repo root (".") and dockerfile should be "Dockerfile"
-    expect(build.context).toBe('.');
-    expect(build.dockerfile).toBe('Dockerfile');
+  test('api service uses the pre-built GHCR image (no local build)', () => {
+    expect(compose.services.api.image).toMatch(/ghcr\.io\/.+wiz-cves/);
+    expect(compose.services.api.build).toBeUndefined();
   });
 
   test('api service maps port 3000', () => {
@@ -116,9 +118,10 @@ describe('docker-compose.yml', () => {
     expect(compose.services.api.healthcheck).toBeDefined();
   });
 
-  test('api service sets NODE_ENV to production', () => {
+  test('api service sets NODE_ENV to production (hardcoded or defaulting)', () => {
     const env = compose.services.api.environment || {};
-    expect(env.NODE_ENV).toBe('production');
+    // NODE_ENV may be hardcoded 'production' or an interpolation that defaults to it.
+    expect(String(env.NODE_ENV)).toMatch(/production/);
   });
 
   test('api service includes USER_AGENTS environment variable', () => {
@@ -126,10 +129,33 @@ describe('docker-compose.yml', () => {
     expect(env.USER_AGENTS).toBeDefined();
   });
 
-  test('compose defines named volumes for data and logs', () => {
+  test('compose defines a named volume for data', () => {
     expect(compose.volumes).toBeDefined();
     expect(compose.volumes).toHaveProperty('data');
-    expect(compose.volumes).toHaveProperty('logs');
+    expect(compose.volumes).not.toHaveProperty('logs');
+  });
+
+  test('api service mounts the data volume', () => {
+    const mounts = compose.services.api.volumes || [];
+    const hasDataMount = mounts.some((m) => String(m).includes('/app/data'));
+    expect(hasDataMount).toBe(true);
+  });
+
+  test('api service drops all Linux capabilities', () => {
+    const capDrop = compose.services.api.cap_drop || [];
+    expect(capDrop).toContain('ALL');
+  });
+
+  test('api service sets no-new-privileges security option', () => {
+    const secOpts = compose.services.api.security_opt || [];
+    expect(secOpts).toContain('no-new-privileges:true');
+  });
+
+  test('api service defines resource limits', () => {
+    const limits = compose.services?.api?.deploy?.resources?.limits;
+    expect(limits).toBeDefined();
+    expect(limits.cpus).toBeDefined();
+    expect(limits.memory).toBeDefined();
   });
 
   test('does not reference a browser/puppeteer service', () => {

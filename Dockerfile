@@ -38,10 +38,10 @@ COPY --from=deps --chown=appuser:appgroup /app/node_modules ./node_modules
 COPY --chown=appuser:appgroup src/ ./src/
 COPY --chown=appuser:appgroup package.json ./
 
-# Pre-create runtime directories with the correct owner so the app never
-# needs root access to write output, logs, or the database.
-RUN mkdir -p data logs && \
-    chown -R appuser:appgroup data logs
+# Pre-create the data directory with the correct owner so the app never
+# needs root access to write the database.
+RUN mkdir -p data && \
+    chown -R appuser:appgroup data
 
 # Drop privileges
 USER appuser
@@ -53,4 +53,8 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD wget -q --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
 
-CMD ["node", "src/api.js"]
+# Entrypoint ensures /app/data exists for both named volumes and bind mounts.
+COPY --chown=appuser:appgroup entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+ENTRYPOINT ["./entrypoint.sh"]
+CMD []

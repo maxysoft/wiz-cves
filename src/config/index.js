@@ -117,8 +117,7 @@ const config = {
 
   // Logging Configuration
   logging: {
-    level: process.env.LOG_LEVEL || 'info',
-    file: process.env.LOG_FILE || './logs/scraper.log'
+    level: process.env.LOG_LEVEL || 'info'
   },
 
   // Data transformation settings
@@ -141,7 +140,6 @@ const config = {
     root: path.resolve(__dirname, '../..'),
     src: path.resolve(__dirname, '..'),
     output: path.resolve(__dirname, '../../output'),
-    logs: path.resolve(__dirname, '../../logs'),
     checkpoints: path.resolve(__dirname, '../../checkpoints')
   }
 };
