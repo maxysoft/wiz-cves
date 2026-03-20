@@ -1,13 +1,22 @@
 const path = require('path');
 require('dotenv').config({ quiet: true });
 
+// Validate cron expression (basic field-count check; node-cron handles deep validation)
+function _isValidCron(expr) {
+  if (!expr) {
+    return false;
+  }
+  const parts = expr.trim().split(/\s+/);
+  return parts.length >= 5 && parts.length <= 6;
+}
+
 // Default user agent list used when USER_AGENTS is not set
 const DEFAULT_USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15'
 ];
 
 /**
@@ -18,7 +27,9 @@ const DEFAULT_USER_AGENTS = [
 function parseUserAgents() {
   if (process.env.USER_AGENTS) {
     const list = process.env.USER_AGENTS.split(',').map((ua) => ua.trim()).filter(Boolean);
-    if (list.length > 0) return list;
+    if (list.length > 0) {
+      return list;
+    }
   }
   if (process.env.USER_AGENT) {
     return [process.env.USER_AGENT.trim()];
@@ -41,6 +52,25 @@ function getRandomUserAgent() {
 }
 
 const config = {
+  // Database Configuration (SQLite)
+  database: {
+    path: path.resolve(
+      __dirname,
+      '../..',
+      process.env.DATABASE_PATH || 'data/cve_scraper.db'
+    )
+  },
+
+  // Scheduling Configuration
+  scheduling: {
+    // Cron expression for automatic scraping (e.g. "0 */6 * * *" = every 6 hours).
+    // Leave empty to disable automatic scheduling.
+    cronExpression: _isValidCron(process.env.SCRAPER_CRON) ? process.env.SCRAPER_CRON.trim() : '',
+    // Hard minimum interval between executions (default: 1 hour).  Cannot be
+    // lowered below 1 hour — this is enforced in code regardless of this value.
+    minIntervalHours: Math.max(1, parseInt(process.env.MIN_INTERVAL_HOURS, 10) || 1)
+  },
+
   // Algolia API Configuration
   algolia: {
     baseUrl: 'https://hdr4182jve-dsn.algolia.net/1/indexes/*/queries',
@@ -58,6 +88,11 @@ const config = {
     retryAttempts: parseInt(process.env.RETRY_ATTEMPTS, 10) || 5, // Increased from 3 to 5
     maxCVEs: parseInt(process.env.MAX_CVES, 10) || null,
     targetUrl: process.env.TARGET_URL || 'https://www.wiz.io/vulnerability-database/cve/search',
+    // Gentle mode: slower scraping to avoid stressing the remote API.
+    // When enabled, uses gentleDelay between requests and disables parallelism.
+    gentleMode: process.env.GENTLE_MODE === 'true',
+    gentleDelay: parseInt(process.env.GENTLE_DELAY_MS, 10) || 5000,
+    gentleHitsPerPage: parseInt(process.env.GENTLE_HITS_PER_PAGE, 10) || 10,
     // Circuit breaker configuration
     circuitBreakerThreshold: parseInt(process.env.CIRCUIT_BREAKER_THRESHOLD, 10) || 5,
     circuitBreakerTimeout: parseInt(process.env.CIRCUIT_BREAKER_TIMEOUT, 10) || 60000,
@@ -98,7 +133,7 @@ const config = {
   // Sourced from USER_AGENTS (comma-separated list), USER_AGENT (single), or
   // the built-in default list.  getRandomUserAgent() picks one per request.
   browser: {
-    userAgents: USER_AGENTS,
+    userAgents: USER_AGENTS
   },
 
   // Paths

@@ -1,6 +1,9 @@
 /**
  * Comprehensive tests for the helpers module.
- * Covers all exported functions with happy-path, edge, and error cases.
+ * File-based I/O helpers have been replaced by database-backed equivalents;
+ * this suite covers the remaining pure utility functions plus the new
+ * database-backed helpers (saveCheckpoint / loadLatestCheckpoint /
+ * saveCVEsToDatabase / loadCVEsFromDatabase).
  *
  * Global helpers (createTempDir, cleanupTempDir) are injected by
  * tests/setup.js which runs before every test suite via jest's
@@ -15,14 +18,39 @@ const {
   sleep,
   retryWithBackoff,
   ensureDir,
-  saveToJson,
-  loadFromJson,
+  saveCVEsToDatabase,
+  loadCVEsFromDatabase,
+  saveCheckpoint,
+  loadLatestCheckpoint,
   validateCVEData,
   cleanText,
   parseCVSSScore,
   generateAnalytics,
-  extractBaseUrls
+  extractBaseUrls,
 } = require('../src/utils/helpers');
+
+const { _resetInstance } = require('../src/utils/database');
+
+// ─── Shared in-memory DB instance for persistence tests ──────────────────────
+
+let testDb;
+let testDbPath;
+
+beforeAll(() => {
+  testDbPath = path.join(os.tmpdir(), `wiz-test-helpers-${Date.now()}.db`);
+  // Reset the singleton so getDatabase() will create a fresh one at testDbPath
+  _resetInstance();
+  // Calling getDatabase(testDbPath) here initialises the singleton that
+  // helpers.js will pick up when it calls getDatabase() internally.
+  testDb = require('../src/utils/database').getDatabase(testDbPath);
+});
+
+afterAll(() => {
+  _resetInstance();
+  try { fs.removeSync(testDbPath); } catch { /* best-effort */ }
+  try { fs.removeSync(`${testDbPath}-wal`); } catch { /* best-effort */ }
+  try { fs.removeSync(`${testDbPath}-shm`); } catch { /* best-effort */ }
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // sleep
@@ -98,42 +126,69 @@ describe('ensureDir', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// saveToJson / loadFromJson
+// saveCVEsToDatabase / loadCVEsFromDatabase  (database-backed)
 // ─────────────────────────────────────────────────────────────────────────────
-describe('saveToJson and loadFromJson', () => {
-  let tmpDir;
+describe('saveCVEsToDatabase and loadCVEsFromDatabase', () => {
+  test('saves CVEs and they can be loaded back', async () => {
+    const cve = createMockCVE({ cveId: 'CVE-2025-99001' });
+    await saveCVEsToDatabase([cve]);
 
-  beforeEach(async () => {
-    tmpDir = await createTempDir();
+    const loaded = await loadCVEsFromDatabase({ search: 'CVE-2025-99001' });
+    expect(loaded.length).toBeGreaterThanOrEqual(1);
+    expect(loaded[0].cveId).toBe('CVE-2025-99001');
   });
 
-  afterEach(async () => {
-    await cleanupTempDir(tmpDir);
+  test('upserts existing CVEs without duplicates', async () => {
+    const cve = createMockCVE({ cveId: 'CVE-2025-99002', severity: 'LOW' });
+    await saveCVEsToDatabase([cve]);
+    await saveCVEsToDatabase([{ ...cve, severity: 'CRITICAL' }]);
+
+    const loaded = await loadCVEsFromDatabase({ search: 'CVE-2025-99002' });
+    const match = loaded.filter(c => c.cveId === 'CVE-2025-99002');
+    expect(match.length).toBe(1);
+    expect(match[0].severity).toBe('CRITICAL');
   });
 
-  test('saves data and can reload it', async () => {
-    const payload = { foo: 'bar', count: 42 };
-    const savedPath = await saveToJson('test_file', payload, tmpDir, false);
-    expect(await fs.pathExists(savedPath)).toBe(true);
-
-    const loaded = await loadFromJson(savedPath);
-    expect(loaded).toMatchObject(payload);
+  test('returns empty array for empty database query with no results', async () => {
+    const loaded = await loadCVEsFromDatabase({ search: 'CVE-NONEXISTENT-ZZZZZ' });
+    expect(Array.isArray(loaded)).toBe(true);
   });
 
-  test('creates a timestamped subfolder when flag is set', async () => {
-    const savedPath = await saveToJson('test_ts', { x: 1 }, tmpDir, true);
-    // The path should contain a 'scrape_' subfolder
-    expect(savedPath).toContain('scrape_');
+  test('saveCVEsToDatabase returns number of processed CVEs', async () => {
+    const cves = [
+      createMockCVE({ cveId: 'CVE-2025-99003' }),
+      createMockCVE({ cveId: 'CVE-2025-99004' }),
+    ];
+    const count = await saveCVEsToDatabase(cves);
+    expect(count).toBe(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// saveCheckpoint / loadLatestCheckpoint  (database-backed)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('saveCheckpoint and loadLatestCheckpoint', () => {
+  test('saves a checkpoint and loads it back', async () => {
+    const cves = [createMockCVE({ cveId: 'CVE-2025-88001' })];
+    await saveCheckpoint(cves, 42);
+
+    const checkpoint = await loadLatestCheckpoint();
+    expect(checkpoint).not.toBeNull();
+    expect(checkpoint.processedCount).toBe(1);
+    expect(checkpoint.currentIndex).toBe(42);
+    expect(Array.isArray(checkpoint.data)).toBe(true);
   });
 
-  test('also writes a _latest.json to the output dir', async () => {
-    await saveToJson('my_data', { hello: 'world' }, tmpDir, false);
-    const latestPath = path.join(tmpDir, 'my_data_latest.json');
-    expect(await fs.pathExists(latestPath)).toBe(true);
-  });
-
-  test('loadFromJson throws on non-existent file', async () => {
-    await expect(loadFromJson('/tmp/does_not_exist.json')).rejects.toThrow();
+  test('loadLatestCheckpoint returns null when no checkpoint exists', () => {
+    // Use a fresh DB so there are no checkpoints
+    const { CVEDatabase: FreshCVEDatabase } = require('../src/utils/database');
+    const tmpPath = path.join(os.tmpdir(), `wiz-fresh-${Date.now()}.db`);
+    const freshDb = new FreshCVEDatabase(tmpPath);
+    freshDb.open();
+    const result = freshDb.getLatestCheckpoint();
+    expect(result).toBeNull();
+    freshDb.close();
+    try { fs.removeSync(tmpPath); } catch { /* best-effort */ }
   });
 });
 
@@ -150,8 +205,8 @@ describe('validateCVEData', () => {
     publishedDate: 'Jan 05, 2025',
     detailUrl: 'https://example.com/cve',
     additionalResources: [
-      { title: 'NVD', url: 'https://nvd.nist.gov/vuln/detail/CVE-2025-12345' }
-    ]
+      { title: 'NVD', url: 'https://nvd.nist.gov/vuln/detail/CVE-2025-12345' },
+    ],
   };
 
   test('passes for a fully valid CVE object', () => {
@@ -313,7 +368,7 @@ describe('generateAnalytics', () => {
     technologies: ['Linux'],
     component: 'kernel',
     additionalResources: { externalLinks: [{ url: 'https://nvd.nist.gov/vuln/detail/CVE-2025-0001' }] },
-    ...overrides
+    ...overrides,
   });
 
   test('returns correct total count', () => {
@@ -325,7 +380,7 @@ describe('generateAnalytics', () => {
     const cves = [
       makeCVE({ severity: 'HIGH' }),
       makeCVE({ severity: 'CRITICAL' }),
-      makeCVE({ severity: 'HIGH' })
+      makeCVE({ severity: 'HIGH' }),
     ];
     const { severityDistribution } = generateAnalytics(cves);
     expect(severityDistribution.HIGH).toBe(2);
@@ -343,7 +398,7 @@ describe('generateAnalytics', () => {
       makeCVE({ score: 1 }),   // 0-3
       makeCVE({ score: 5 }),   // 3-7
       makeCVE({ score: 8 }),   // 7-9
-      makeCVE({ score: 9.5 }) // 9-10
+      makeCVE({ score: 9.5 }), // 9-10
     ];
     const { scoreDistribution } = generateAnalytics(cves);
     expect(scoreDistribution['0-3']).toBe(1);
@@ -361,7 +416,7 @@ describe('generateAnalytics', () => {
   test('counts top technologies', () => {
     const cves = [
       makeCVE({ technologies: ['Linux', 'Apache'] }),
-      makeCVE({ technologies: ['Linux'] })
+      makeCVE({ technologies: ['Linux'] }),
     ];
     const { topTechnologies } = generateAnalytics(cves);
     expect(topTechnologies.Linux).toBe(2);
@@ -379,7 +434,7 @@ describe('generateAnalytics', () => {
   test('counts CVEs with additional resources', () => {
     const cves = [
       makeCVE(),  // has externalLinks
-      makeCVE({ additionalResources: {} })  // no externalLinks
+      makeCVE({ additionalResources: {} }),  // no externalLinks
     ];
     const { withAdditionalResources } = generateAnalytics(cves);
     expect(withAdditionalResources).toBe(1);
@@ -393,7 +448,7 @@ describe('extractBaseUrls', () => {
   test('extracts unique base URLs from sourceUrl', () => {
     const cveData = [
       { sourceUrl: 'https://example.com/path/to/page' },
-      { sourceUrl: 'https://example.com/another/path' }
+      { sourceUrl: 'https://example.com/another/path' },
     ];
     const urls = extractBaseUrls(cveData);
     expect(urls).toContain('https://example.com');
@@ -405,9 +460,9 @@ describe('extractBaseUrls', () => {
       additionalResources: {
         externalLinks: [
           { url: 'https://nvd.nist.gov/vuln/detail/CVE-2025-0001' },
-          { url: 'https://github.com/org/repo/issues/1' }
-        ]
-      }
+          { url: 'https://github.com/org/repo/issues/1' },
+        ],
+      },
     }];
     const urls = extractBaseUrls(cveData);
     expect(urls).toContain('https://nvd.nist.gov');
@@ -417,7 +472,7 @@ describe('extractBaseUrls', () => {
   test('returns sorted array', () => {
     const cveData = [
       { sourceUrl: 'https://z-domain.com/foo' },
-      { sourceUrl: 'https://a-domain.com/bar' }
+      { sourceUrl: 'https://a-domain.com/bar' },
     ];
     const urls = extractBaseUrls(cveData);
     expect(urls[0]).toBe('https://a-domain.com');
@@ -436,7 +491,7 @@ describe('extractBaseUrls', () => {
   test('deduplicates across multiple CVEs', () => {
     const cveData = [
       { sourceUrl: 'https://same.com/path1' },
-      { sourceUrl: 'https://same.com/path2' }
+      { sourceUrl: 'https://same.com/path2' },
     ];
     const urls = extractBaseUrls(cveData);
     expect(urls.length).toBe(1);

@@ -65,6 +65,27 @@ describe('Config module', () => {
     test('dataTransform.includeDescription defaults to true', () => {
       expect(config.dataTransform.includeDescription).toBe(true);
     });
+
+    test('database.path is an absolute path ending in .db', () => {
+      expect(path.isAbsolute(config.database.path)).toBe(true);
+      expect(config.database.path).toMatch(/\.db$/);
+    });
+
+    test('scheduling.cronExpression defaults to empty string', () => {
+      expect(config.scheduling.cronExpression).toBe('');
+    });
+
+    test('scheduling.minIntervalHours defaults to 1', () => {
+      expect(config.scheduling.minIntervalHours).toBe(1);
+    });
+
+    test('scraping.gentleMode defaults to false', () => {
+      expect(config.scraping.gentleMode).toBe(false);
+    });
+
+    test('scraping.gentleDelay defaults to 5000', () => {
+      expect(config.scraping.gentleDelay).toBe(5000);
+    });
   });
 
   describe('environment variable overrides', () => {
@@ -106,6 +127,54 @@ describe('Config module', () => {
       const cfg = require('../src/config');
       expect(cfg.scraping.delayBetweenRequests).toBe(500);
       delete process.env.DELAY_BETWEEN_REQUESTS;
+    });
+
+    test('SCRAPER_CRON sets scheduling.cronExpression when valid', () => {
+      jest.resetModules();
+      process.env.SCRAPER_CRON = '0 */6 * * *';
+      const cfg = require('../src/config');
+      expect(cfg.scheduling.cronExpression).toBe('0 */6 * * *');
+      delete process.env.SCRAPER_CRON;
+    });
+
+    test('SCRAPER_CRON is ignored when expression is invalid', () => {
+      jest.resetModules();
+      process.env.SCRAPER_CRON = 'not-a-cron';
+      const cfg = require('../src/config');
+      expect(cfg.scheduling.cronExpression).toBe('');
+      delete process.env.SCRAPER_CRON;
+    });
+
+    test('MIN_INTERVAL_HOURS overrides minIntervalHours', () => {
+      jest.resetModules();
+      process.env.MIN_INTERVAL_HOURS = '2';
+      const cfg = require('../src/config');
+      expect(cfg.scheduling.minIntervalHours).toBe(2);
+      delete process.env.MIN_INTERVAL_HOURS;
+    });
+
+    test('MIN_INTERVAL_HOURS cannot be set below 1', () => {
+      jest.resetModules();
+      process.env.MIN_INTERVAL_HOURS = '0';
+      const cfg = require('../src/config');
+      expect(cfg.scheduling.minIntervalHours).toBe(1);
+      delete process.env.MIN_INTERVAL_HOURS;
+    });
+
+    test('GENTLE_MODE=true enables gentle mode', () => {
+      jest.resetModules();
+      process.env.GENTLE_MODE = 'true';
+      const cfg = require('../src/config');
+      expect(cfg.scraping.gentleMode).toBe(true);
+      delete process.env.GENTLE_MODE;
+    });
+
+    test('DATABASE_PATH overrides database.path', () => {
+      jest.resetModules();
+      process.env.DATABASE_PATH = 'custom/path/data.db';
+      const cfg = require('../src/config');
+      expect(cfg.database.path).toContain('custom/path/data.db');
+      delete process.env.DATABASE_PATH;
     });
   });
 

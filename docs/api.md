@@ -1,31 +1,24 @@
-# API Reference
+# REST API Reference
 
-The REST API server (`src/api.js`) is started with:
+The CVE Scraper exposes a REST API (`src/api.js`, default port 3000).
 
-```bash
-node src/api.js
-# or
-npm run api
-```
-
-Default base URL: `http://localhost:3000`
+All responses use `Content-Type: application/json`.
 
 ---
 
-## Health check
+## Health
 
 ### `GET /health`
 
-Liveness probe. Always returns 200 while the server is up.
+Returns the current health status of the service.
 
-**Response**
-
+**Response 200**
 ```json
 {
   "status": "healthy",
-  "timestamp": "2025-01-07T10:00:00.000Z",
+  "timestamp": "2025-06-01T12:00:00.000Z",
   "version": "1.0.0",
-  "uptime": 42.7
+  "uptime": 12345.67
 }
 ```
 
@@ -35,19 +28,19 @@ Liveness probe. Always returns 200 while the server is up.
 
 ### `GET /api/status`
 
-Returns the current state of the scraping engine and configured schedules.
+Returns scraper state and active configuration.
 
-**Response**
-
+**Response 200**
 ```json
 {
   "isScrapingInProgress": false,
   "currentJob": null,
-  "scheduledJobs": ["daily_scrape"],
+  "scheduledJobs": ["auto", "hourly"],
   "config": {
     "maxConcurrency": 3,
     "delayBetweenRequests": 2000,
-    "targetUrl": "https://www.wiz.io/vulnerability-database/cve/search"
+    "targetUrl": "https://www.wiz.io/vulnerability-database/cve/search",
+    "gentleMode": false
   }
 }
 ```
@@ -58,61 +51,51 @@ Returns the current state of the scraping engine and configured schedules.
 
 ### `POST /api/scrape`
 
-Start a new scraping job in the background. Returns immediately with a job ID.
+Start a scraping job in the background.  Results are saved to the SQLite database.
+
+A **1-hour hard limiter** is enforced: if the last execution occurred less than 1 hour ago the request is rejected with HTTP 429.
 
 **Request body** (all fields optional)
-
 ```json
 {
   "maxConcurrency": 3,
   "delayBetweenRequests": 2000,
   "retryAttempts": 5,
   "maxCVEs": 500,
-  "outputFilename": "cve_data"
+  "gentleMode": false,
+  "useComprehensiveScraping": true
 }
 ```
 
-**Response `200`**
-
+**Response 200**
 ```json
-{
-  "message": "Scraping operation started",
-  "jobId": "scrape_1736247600000",
-  "options": { "..." }
-}
+{ "message": "Scraping operation started", "jobId": "scrape_1234567890" }
 ```
 
-**Response `409`** – a job is already running
-
+**Response 409** — scrape already in progress  
+**Response 429** — rate limited
 ```json
-{
-  "error": "Scraping operation already in progress",
-  "currentJob": { "id": "scrape_...", "status": "running" }
-}
+{ "error": "Rate limited: ...", "minutesRemaining": 42 }
 ```
 
 ---
 
 ### `GET /api/scrape/:jobId`
 
-Poll the status of a running or completed job.
+Get status of a specific job.
 
-**Response `200`**
-
+**Response 200**
 ```json
 {
-  "id": "scrape_1736247600000",
-  "startTime": "2025-01-07T10:00:00.000Z",
+  "id": "scrape_1234567890",
+  "startTime": "2025-06-01T12:00:00.000Z",
   "status": "completed",
-  "endTime": "2025-01-07T10:45:00.000Z",
-  "result": {
-    "totalCVEs": 1500,
-    "outputPath": "/app/output/scrape_2025-01-07/cve_data_2025-01-07T10-45-00.json"
-  }
+  "endTime": "2025-06-01T12:05:00.000Z",
+  "result": { "totalCVEs": 4200 }
 }
 ```
 
-Possible `status` values: `starting` | `running` | `completed` | `failed` | `stopped`
+**Response 404** — job not found
 
 ---
 
@@ -120,16 +103,41 @@ Possible `status` values: `starting` | `running` | `completed` | `failed` | `sto
 
 Stop the currently running scraping job.
 
-**Response `200`**
+**Response 200** / **Response 400** (nothing running)
 
+---
+
+## CVE Data
+
+### `GET /api/cves`
+
+Query CVEs stored in the database.
+
+**Query parameters**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `severity` | string | Filter by severity (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`) |
+| `search` | string | Substring search on `cveId`, `component`, `description` |
+| `limit` | number | Max results (default: 100) |
+| `offset` | number | Pagination offset (default: 0) |
+
+**Response 200**
 ```json
 {
-  "message": "Scraping operation stopped",
-  "jobId": "scrape_1736247600000"
+  "total": 4200,
+  "count": 100,
+  "cves": [ { "cveId": "CVE-2025-0001", "severity": "HIGH", ... } ]
 }
 ```
 
-**Response `400`** – no job running
+---
+
+### `GET /api/cves/:cveId`
+
+Fetch a single CVE by its ID.
+
+**Response 200** / **Response 404**
 
 ---
 
@@ -137,50 +145,30 @@ Stop the currently running scraping job.
 
 ### `POST /api/schedule`
 
-Register a cron-based recurring scrape.
+Create a cron-scheduled scraping job.  The hard 1-hour limiter is also enforced when the scheduled job fires.
 
 **Request body**
-
 ```json
 {
-  "name": "daily_scrape",
-  "cronExpression": "0 2 * * *",
-  "options": {
-    "maxConcurrency": 2,
-    "outputFilename": "daily_cve_data"
-  }
+  "cronExpression": "0 */6 * * *",
+  "name": "every-6h",
+  "options": { "gentleMode": false }
 }
 ```
 
-**Response `200`**
-
-```json
-{
-  "message": "Scraping scheduled successfully",
-  "scheduleId": "daily_scrape",
-  "cronExpression": "0 2 * * *"
-}
-```
-
-**Response `400`** – invalid cron expression  
-**Response `409`** – a schedule with this name already exists
+**Response 200** / **Response 400** (invalid cron) / **Response 409** (name exists)
 
 ---
 
 ### `GET /api/schedules`
 
-List all registered schedules.
+List all active schedules.
 
-**Response**
-
+**Response 200**
 ```json
 {
   "schedules": [
-    {
-      "id": "daily_scrape",
-      "cronExpression": "0 2 * * *",
-      "createdAt": "2025-01-07T08:00:00.000Z"
-    }
+    { "id": "every-6h", "cronExpression": "0 */6 * * *", "createdAt": "..." }
   ]
 }
 ```
@@ -189,18 +177,39 @@ List all registered schedules.
 
 ### `DELETE /api/schedule/:scheduleId`
 
-Remove a registered schedule.
+Remove an active schedule.
 
-**Response `200`**
+**Response 200** / **Response 404**
 
+---
+
+## Runs
+
+### `GET /api/runs`
+
+Return the history of scrape runs stored in the database.
+
+**Query parameters**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `limit` | 20 | Maximum number of runs to return |
+
+**Response 200**
 ```json
 {
-  "message": "Schedule deleted successfully",
-  "scheduleId": "daily_scrape"
+  "runs": [
+    {
+      "id": 1,
+      "jobId": "cli_1234567890",
+      "startedAt": "2025-06-01T12:00:00.000Z",
+      "completedAt": "2025-06-01T12:05:00.000Z",
+      "status": "completed",
+      "totalCves": 4200
+    }
+  ]
 }
 ```
-
-**Response `404`** – schedule not found
 
 ---
 
@@ -208,66 +217,25 @@ Remove a registered schedule.
 
 ### `POST /api/analytics`
 
-Generate statistics from a saved data file or an inline payload.
+Generate analytics.  When no body is provided, analytics are computed from all CVEs in the database.
 
-**Request body – file path**
-
+**Request body** (optional)
 ```json
-{ "filePath": "/app/output/cve_data_latest.json" }
+{ "data": { "cveData": [ ... ] } }
 ```
 
-**Request body – inline data**
-
+**Response 200**
 ```json
 {
-  "data": {
-    "cveData": [ { "cveId": "CVE-2025-0001", "severity": "HIGH", "score": 8.5 } ]
-  }
-}
-```
-
-**Response `200`**
-
-```json
-{
-  "generatedAt": "2025-01-07T11:00:00.000Z",
+  "generatedAt": "2025-06-01T12:10:00.000Z",
   "analytics": {
-    "total": 1500,
-    "averageScore": "7.20",
-    "severityDistribution": { "CRITICAL": 45, "HIGH": 312, "MEDIUM": 890, "LOW": 253 },
-    "scoreDistribution": { "0-3": 180, "3-7": 720, "7-9": 480, "9-10": 120 },
-    "topTechnologies": { "Linux": 456, "Windows": 234 },
-    "topComponents": { "kernel": 123, "openssl": 89 },
-    "withAdditionalResources": 1245
+    "total": 4200,
+    "averageScore": "7.42",
+    "severityDistribution": { "HIGH": 1800, "CRITICAL": 600 },
+    "topTechnologies": { "Linux": 900 }
   }
 }
 ```
-
----
-
-## Files
-
-### `GET /api/files`
-
-List JSON output files available for download.
-
-**Response**
-
-```json
-{
-  "files": [
-    {
-      "name": "cve_data_2025-01-07T10-45-00.json",
-      "path": "/output/cve_data_2025-01-07T10-45-00.json",
-      "size": 2048576,
-      "createdAt": "2025-01-07T10:45:00.000Z",
-      "modifiedAt": "2025-01-07T10:45:00.000Z"
-    }
-  ]
-}
-```
-
-Files are served statically at `GET /output/<filename>`.
 
 ---
 
@@ -275,31 +243,17 @@ Files are served statically at `GET /output/<filename>`.
 
 ### `GET /api/checkpoint`
 
-Return metadata about the most recently saved checkpoint.
+Get the latest checkpoint stored in the database.
 
-**Response `200`**
-
+**Response 200**
 ```json
 {
   "checkpoint": {
-    "timestamp": "2025-01-07T10:30:00.000Z",
-    "processedCount": 800,
-    "currentIndex": 800
+    "timestamp": "2025-06-01T11:55:00.000Z",
+    "processedCount": 3200,
+    "currentIndex": 3200
   }
 }
 ```
 
-**Response `404`** – no checkpoint exists
-
----
-
-## Error format
-
-All error responses follow the same shape:
-
-```json
-{
-  "error": "Human-readable error title",
-  "message": "Detail (only in development mode for 500 errors)"
-}
-```
+**Response 404** — no checkpoint found

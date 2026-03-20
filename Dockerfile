@@ -3,6 +3,9 @@ FROM node:24-alpine AS deps
 
 WORKDIR /app
 
+# Build tools required by better-sqlite3 (native addon compilation)
+RUN apk add --no-cache python3 make g++ sqlite-dev
+
 # Copy only the manifest files first so Docker layer-caches the install step
 COPY package*.json ./
 
@@ -17,9 +20,9 @@ LABEL org.opencontainers.image.title="Wiz CVE Scraper API" \
       org.opencontainers.image.source="https://github.com/maxysoft/wiz-cves" \
       org.opencontainers.image.licenses="MIT"
 
-# Apply latest security patches and install wget for the health-check
+# Apply latest security patches and install runtime deps
 RUN apk update && apk upgrade --no-cache && \
-    apk add --no-cache wget && \
+    apk add --no-cache wget sqlite-libs && \
     rm -rf /var/cache/apk/*
 
 # Create a non-root user/group for the application
@@ -36,9 +39,9 @@ COPY --chown=appuser:appgroup src/ ./src/
 COPY --chown=appuser:appgroup package.json ./
 
 # Pre-create runtime directories with the correct owner so the app never
-# needs root access to write output, logs, or checkpoints.
-RUN mkdir -p output logs checkpoints && \
-    chown -R appuser:appgroup output logs checkpoints
+# needs root access to write output, logs, or the database.
+RUN mkdir -p data logs && \
+    chown -R appuser:appgroup data logs
 
 # Drop privileges
 USER appuser
