@@ -416,11 +416,7 @@ class CVEScraperAPI {
       
     } finally {
       this.isScrapingInProgress = false;
-      
-      if (this.scraper) {
-        await this.scraper.cleanup();
-        this.scraper = null;
-      }
+      this.scraper = null;
     }
   }
 

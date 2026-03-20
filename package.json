@@ -34,7 +34,6 @@
     "node-cron": "^4.2.1",
     "p-limit": "^7.3.0",
     "progress": "^2.0.3",
-    "puppeteer": "^24.40.0",
     "winston": "^3.19.0"
   },
   "devDependencies": {

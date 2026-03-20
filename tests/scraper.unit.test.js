@@ -299,7 +299,7 @@ describe('WizCVEScraper — transformAlgoliaHitToCVE', () => {
     const hit = makeHit();
     const cve = await scraper.transformAlgoliaHitToCVE(hit);
 
-    expect(cve.id).toBe('CVE-2025-0001');
+    expect(cve.cveId).toBe('CVE-2025-0001');
     expect(cve.severity).toBe('HIGH');
     expect(cve.score).toBe(8.5);
     expect(typeof cve.description).toBe('string');
@@ -310,7 +310,7 @@ describe('WizCVEScraper — transformAlgoliaHitToCVE', () => {
     const hit = { externalId: 'CVE-2025-9999' };
     const cve = await scraper.transformAlgoliaHitToCVE(hit);
 
-    expect(cve.id).toBe('CVE-2025-9999');
+    expect(cve.cveId).toBe('CVE-2025-9999');
     expect(cve.severity).toBe('N/A');
     expect(cve.score).toBe('N/A');
     expect(cve.technologies).toBe('N/A');
