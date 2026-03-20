@@ -1,13 +1,11 @@
 const axios = require('axios');
+const https = require('https');
 const ProgressBar = require('progress');
-const pLimit = require('p-limit');
 const logger = require('../utils/logger');
 const config = require('../config');
 const {
   sleep,
-  retryWithBackoff,
   saveCheckpoint,
-  ensureDirectoryExists,
   validateCVEData,
   cleanText
 } = require('../utils/helpers');
@@ -183,9 +181,8 @@ class WizCVEScraper {
         const totalHits = response.results[0].nbHits || 0;
         logger.info(`API connectivity test successful. Total CVEs available: ${totalHits}`);
         return totalHits;
-      } else {
-        throw new Error('Invalid API response structure');
       }
+      throw new Error('Invalid API response structure');
     } catch (error) {
       logger.error('API connectivity test failed:', error);
       throw error;
@@ -234,7 +231,7 @@ class WizCVEScraper {
             highlightPreTag: '__ais-highlight__',
             hitsPerPage: hitsPerPage || this.options.hitsPerPage,
             maxValuesPerFacet: 200,
-            page: page,
+            page,
             query: '',
             facetFilters: technologyFilters.length > 0 ? [
               technologyFilters.map(filter => `affectedTechnologies.filter:${filter}`)
@@ -254,7 +251,7 @@ class WizCVEScraper {
           headers,
           timeout: this.algoliaConfig.timeout,
           // Add connection timeout
-          httpsAgent: new (require('https').Agent)({
+          httpsAgent: new https.Agent({
             keepAlive: true,
             timeout: this.algoliaConfig.timeout,
             freeSocketTimeout: 30000
@@ -278,9 +275,8 @@ class WizCVEScraper {
             logger.info(`Request succeeded on attempt ${attempt}`);
           }
           return response.data;
-        } else {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       } catch (error) {
         lastError = error;
         const isRetryableError = this.isRetryableError(error);
@@ -369,10 +365,9 @@ class WizCVEScraper {
       if (this.options.useComprehensiveScraping) {
         logger.info('Using comprehensive scraping strategy with technology filters');
         return await this.loadCVEsComprehensive();
-      } else {
-        logger.info('Using standard scraping strategy');
-        return await this.loadCVEsStandard();
       }
+      logger.info('Using standard scraping strategy');
+      return await this.loadCVEsStandard();
     } catch (error) {
       logger.error('Error during CVE loading:', error);
       throw error;
@@ -686,8 +681,8 @@ class WizCVEScraper {
           
           if (url && title && url.startsWith('http')) {
             additionalResources.push({
-              title: title,
-              url: url,
+              title,
+              url,
               type: this.categorizeResourceType(url, title)
             });
           }
@@ -705,18 +700,23 @@ class WizCVEScraper {
    * Categorize resource type based on URL and title
    */
   categorizeResourceType(url, title) {
-    const lowerUrl = url.toLowerCase();
+    let hostname;
+    try {
+      hostname = new URL(url).hostname.toLowerCase();
+    } catch (_err) {
+      hostname = '';
+    }
     const lowerTitle = title.toLowerCase();
-    
-    if (lowerUrl.includes('nvd.nist.gov')) return 'NVD';
-    if (lowerUrl.includes('github.com')) return 'GitHub';
-    if (lowerUrl.includes('vuldb.com')) return 'VulDB';
-    if (lowerUrl.includes('cve.mitre.org')) return 'MITRE';
-    if (lowerUrl.includes('exploit-db.com')) return 'Exploit-DB';
-    if (lowerUrl.includes('security.') || lowerTitle.includes('advisory')) return 'Security Advisory';
-    if (lowerTitle.includes('patch') || lowerTitle.includes('fix')) return 'Patch/Fix';
-    if (lowerTitle.includes('poc') || lowerTitle.includes('proof of concept')) return 'Proof of Concept';
-    
+
+    if (hostname === 'nvd.nist.gov') { return 'NVD'; }
+    if (hostname === 'github.com' || hostname.endsWith('.github.com')) { return 'GitHub'; }
+    if (hostname === 'vuldb.com') { return 'VulDB'; }
+    if (hostname === 'cve.mitre.org') { return 'MITRE'; }
+    if (hostname === 'www.exploit-db.com' || hostname === 'exploit-db.com') { return 'Exploit-DB'; }
+    if (hostname.startsWith('security.') || lowerTitle.includes('advisory')) { return 'Security Advisory'; }
+    if (lowerTitle.includes('patch') || lowerTitle.includes('fix')) { return 'Patch/Fix'; }
+    if (lowerTitle.includes('poc') || lowerTitle.includes('proof of concept')) { return 'Proof of Concept'; }
+
     return 'Other';
   }
 
@@ -762,34 +762,28 @@ class WizCVEScraper {
   /**
    * Extract CVE list (now just returns the loaded data)
    */
-  async extractCVEList() {
-    try {
-      logger.info('CVE list already extracted via API calls');
-      return this.cveData;
-    } catch (error) {
-      logger.error('Failed to return CVE list:', error);
-      throw error;
-    }
+  extractCVEList() {
+    logger.info('CVE list already extracted via API calls');
+    return this.cveData;
   }
 
   /**
    * Process CVE details (now simplified since data comes from API)
    */
-  async processCVEDetails(cve) {
+  processCVEDetails(cve) {
     try {
       // CVE details are already included in the API response
       // Just validate the data
       const validation = validateCVEData(cve);
       if (validation.error) {
         logger.warn(`CVE validation failed for ${cve.id}:`, validation.error.message);
-          // Use the original data even if validation fails
-        }
-        
-        return cve;
-      } catch (error) {
-        logger.error(`Error processing CVE ${cve.id}:`, error);
-        return cve;
+        // Use the original data even if validation fails
       }
+      return cve;
+    } catch (error) {
+      logger.error(`Error processing CVE ${cve.id}:`, error);
+      return cve;
+    }
   }
 
   /**
@@ -867,11 +861,11 @@ class WizCVEScraper {
   /**
    * Clean up resources
    */
-  async cleanup() {
+  cleanup() {
     try {
       // Clear intermediate data to prevent memory leaks
       this.currentAllCVEs = null;
-      
+
       // No browser to clean up in API-based approach
       logger.info('Cleanup completed successfully');
     } catch (error) {

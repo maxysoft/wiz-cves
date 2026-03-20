@@ -68,11 +68,11 @@ const ensureDir = async (dirPath) => {
  */
 const saveToJson = async (filename, data, outputDir = config.output.dir, useTimestampedFolder = false) => {
   let finalOutputDir = outputDir;
-  
+
   if (useTimestampedFolder) {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0] + '_' + 
-                     new Date().toISOString().replace(/[:.]/g, '-').split('T')[1].split('.')[0];
-    finalOutputDir = path.join(outputDir, `scrape_${timestamp}`);
+    const isoDate = new Date().toISOString().replace(/[:.]/g, '-');
+    const tsFolder = `${isoDate.split('T')[0]}_${isoDate.split('T')[1].split('.')[0]}`;
+    finalOutputDir = path.join(outputDir, `scrape_${tsFolder}`);
   }
   
   await ensureDir(finalOutputDir);
@@ -152,8 +152,8 @@ const loadLatestCheckpoint = async () => {
     const checkpointFiles = files
       .filter(file => file.startsWith('checkpoint_') && file.endsWith('.json'))
       .sort((a, b) => {
-        const timeA = parseInt(a.replace('checkpoint_', '').replace('.json', ''));
-        const timeB = parseInt(b.replace('checkpoint_', '').replace('.json', ''));
+        const timeA = parseInt(a.replace('checkpoint_', '').replace('.json', ''), 10);
+        const timeB = parseInt(b.replace('checkpoint_', '').replace('.json', ''), 10);
         return timeB - timeA;
       });
     
@@ -224,14 +224,14 @@ const cleanText = (text) => {
  * @returns {number|null} - Parsed score
  */
 const parseCVSSScore = (scoreText) => {
-  if (!scoreText) return null;
-  
+  if (!scoreText) { return null; }
+
   const match = scoreText.toString().match(/\d+\.?\d*/);
   if (match) {
     const score = parseFloat(match[0]);
     return score >= 0 && score <= 10 ? score : null;
   }
-  
+
   return null;
 };
 
@@ -275,10 +275,15 @@ const generateAnalytics = (cveData) => {
       totalScore += cve.score;
       scoreCount++;
       
-      if (cve.score < 3) analytics.scoreDistribution['0-3']++;
-      else if (cve.score < 7) analytics.scoreDistribution['3-7']++;
-      else if (cve.score < 9) analytics.scoreDistribution['7-9']++;
-      else analytics.scoreDistribution['9-10']++;
+      if (cve.score < 3) {
+        analytics.scoreDistribution['0-3']++;
+      } else if (cve.score < 7) {
+        analytics.scoreDistribution['3-7']++;
+      } else if (cve.score < 9) {
+        analytics.scoreDistribution['7-9']++;
+      } else {
+        analytics.scoreDistribution['9-10']++;
+      }
     }
     
     // Technologies
@@ -307,12 +312,12 @@ const generateAnalytics = (cveData) => {
   
   // Sort top technologies and components
   analytics.topTechnologies = Object.entries(analytics.topTechnologies)
-    .sort(([,a], [,b]) => b - a)
+    .sort(([, a], [, b]) => b - a)
     .slice(0, 10)
     .reduce((obj, [key, value]) => ({ ...obj, [key]: value }), {});
-    
+
   analytics.topComponents = Object.entries(analytics.topComponents)
-    .sort(([,a], [,b]) => b - a)
+    .sort(([, a], [, b]) => b - a)
     .slice(0, 10)
     .reduce((obj, [key, value]) => ({ ...obj, [key]: value }), {});
   
@@ -329,11 +334,11 @@ const generateAnalytics = (cveData) => {
  */
 const saveToTextFile = async (data, filename, outputDir = config.outputDir, useTimestampedFolder = true) => {
   let finalOutputDir = outputDir;
-  
+
   if (useTimestampedFolder) {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0] + '_' + 
-                     new Date().toISOString().replace(/[:.]/g, '-').split('T')[1].split('.')[0];
-    finalOutputDir = path.join(outputDir, `scrape_${timestamp}`);
+    const isoDate = new Date().toISOString().replace(/[:.]/g, '-');
+    const tsFolder = `${isoDate.split('T')[0]}_${isoDate.split('T')[1].split('.')[0]}`;
+    finalOutputDir = path.join(outputDir, `scrape_${tsFolder}`);
   }
   
   await ensureDir(finalOutputDir);
@@ -388,7 +393,7 @@ const extractBaseUrls = (cveData) => {
       const urlObj = new URL(url);
       const baseUrl = `${urlObj.protocol}//${urlObj.hostname}`;
       baseUrls.add(baseUrl);
-    } catch (error) {
+    } catch (_unused) {
       logger.warn(`Invalid URL encountered: ${url}`);
     }
   });
