@@ -1,6 +1,45 @@
 const path = require('path');
 require('dotenv').config({ quiet: true });
 
+// Default user agent list used when USER_AGENTS is not set
+const DEFAULT_USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15',
+];
+
+/**
+ * Parse the USER_AGENTS environment variable.
+ * Accepts a comma-separated list of user-agent strings.
+ * Falls back to USER_AGENT (single value) or the built-in default list.
+ */
+function parseUserAgents() {
+  if (process.env.USER_AGENTS) {
+    const list = process.env.USER_AGENTS.split(',').map((ua) => ua.trim()).filter(Boolean);
+    if (list.length > 0) return list;
+  }
+  if (process.env.USER_AGENT) {
+    return [process.env.USER_AGENT.trim()];
+  }
+  return DEFAULT_USER_AGENTS;
+}
+
+// Resolved once at startup; shared by the config object and getRandomUserAgent.
+const USER_AGENTS = parseUserAgents();
+
+/**
+ * Return a random user-agent string from the configured list.
+ * This is called on every outbound request so that each request
+ * uses a different agent (uniform random rotation).
+ *
+ * @returns {string}
+ */
+function getRandomUserAgent() {
+  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
+
 const config = {
   // Algolia API Configuration
   algolia: {
@@ -55,6 +94,13 @@ const config = {
     maxDescriptionLength: parseInt(process.env.MAX_DESCRIPTION_LENGTH, 10) || 1000
   },
 
+  // User-agent rotation
+  // Sourced from USER_AGENTS (comma-separated list), USER_AGENT (single), or
+  // the built-in default list.  getRandomUserAgent() picks one per request.
+  browser: {
+    userAgents: USER_AGENTS,
+  },
+
   // Paths
   paths: {
     root: path.resolve(__dirname, '../..'),
@@ -66,3 +112,4 @@ const config = {
 };
 
 module.exports = config;
+module.exports.getRandomUserAgent = getRandomUserAgent;

@@ -3,6 +3,7 @@ const https = require('https');
 const ProgressBar = require('progress');
 const logger = require('../utils/logger');
 const config = require('../config');
+const { getRandomUserAgent } = require('../config');
 const {
   sleep,
   saveCheckpoint,
@@ -241,6 +242,7 @@ class WizCVEScraper {
 
         const headers = {
           'Content-Type': 'application/json',
+          'User-Agent': getRandomUserAgent(),
           'x-algolia-agent': 'Algolia for JavaScript (5.25.0); Search (5.25.0); Browser; instantsearch.js (4.78.3); react (19.1.0); react-instantsearch (7.15.8); react-instantsearch-core (7.15.8); next.js (15.3.3); JS Helper (3.25.0)',
           'x-algolia-api-key': this.algoliaConfig.apiKey,
           'x-algolia-application-id': this.algoliaConfig.applicationId
