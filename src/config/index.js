@@ -101,7 +101,10 @@ const config = {
     circuitBreakerTimeout: parseInt(process.env.CIRCUIT_BREAKER_TIMEOUT, 10) || 60000,
     // Connection pool settings
     maxConcurrentRequests: parseInt(process.env.MAX_CONCURRENT_REQUESTS, 10) || 3, // Reduced from 5 to 3
-    requestPoolTimeout: parseInt(process.env.REQUEST_POOL_TIMEOUT, 10) || 120000
+    requestPoolTimeout: parseInt(process.env.REQUEST_POOL_TIMEOUT, 10) || 120000,
+    // When true, uses technology-filter-based parallel scraping to maximise coverage.
+    // Overridden to false automatically when gentleMode is enabled.
+    useComprehensiveScraping: process.env.USE_COMPREHENSIVE_SCRAPING === 'true'
   },
 
   // Output Configuration
