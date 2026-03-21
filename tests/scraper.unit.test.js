@@ -485,3 +485,96 @@ describe('WizCVEScraper — makeBrowseRequest', () => {
     await expect(scraper.makeBrowseRequest()).rejects.toThrow('HTTP 403');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// loadCVEsStandard
+// ─────────────────────────────────────────────────────────────────────────────
+describe('WizCVEScraper — loadCVEsStandard', () => {
+  let scraper;
+
+  beforeEach(() => {
+    scraper = new WizCVEScraper({ retryAttempts: 1, delayBetweenRequests: 0, hitsPerPage: 2 });
+    jest.clearAllMocks();
+  });
+
+  test('uses the Search API endpoint (not the Browse API)', async () => {
+    // Single page with no further results
+    axios.post.mockResolvedValue(
+      makeAlgoliaResponse([makeHit()], 1)
+    );
+    // Inject nbPages into the result so pagination stops after page 0
+    axios.post.mockResolvedValueOnce({
+      status: 200,
+      statusText: 'OK',
+      data: { results: [{ hits: [makeHit()], nbHits: 1, nbPages: 1 }] }
+    });
+
+    await scraper.loadCVEsStandard();
+
+    const url = axios.post.mock.calls[0][0];
+    expect(url).not.toMatch(/\/browse$/);
+    expect(url).toMatch(/\/1\/indexes\/\*\/queries$/);
+  });
+
+  test('collects CVEs from a single page', async () => {
+    const hits = [makeHit(), makeHit({ externalId: 'CVE-2025-0002' })];
+    axios.post.mockResolvedValue({
+      status: 200,
+      statusText: 'OK',
+      data: { results: [{ hits, nbHits: 2, nbPages: 1 }] }
+    });
+
+    await scraper.loadCVEsStandard();
+
+    expect(scraper.cveData.length).toBe(2);
+  });
+
+  test('paginates across multiple pages', async () => {
+    const page0Response = {
+      status: 200,
+      statusText: 'OK',
+      data: { results: [{ hits: [makeHit()], nbHits: 2, nbPages: 2 }] }
+    };
+    const page1Response = {
+      status: 200,
+      statusText: 'OK',
+      data: { results: [{ hits: [makeHit({ externalId: 'CVE-2025-0002' })], nbHits: 2, nbPages: 2 }] }
+    };
+    axios.post
+      .mockResolvedValueOnce(page0Response)
+      .mockResolvedValueOnce(page1Response);
+
+    await scraper.loadCVEsStandard();
+
+    expect(axios.post).toHaveBeenCalledTimes(2);
+    expect(scraper.cveData.length).toBe(2);
+  });
+
+  test('stops when maxCVEs cap is reached', async () => {
+    const hits = [makeHit(), makeHit({ externalId: 'CVE-2025-0002' }), makeHit({ externalId: 'CVE-2025-0003' })];
+    scraper.options.maxCVEs = 1;
+    axios.post.mockResolvedValue({
+      status: 200,
+      statusText: 'OK',
+      data: { results: [{ hits, nbHits: 3, nbPages: 1 }] }
+    });
+
+    await scraper.loadCVEsStandard();
+
+    expect(scraper.cveData.length).toBe(1);
+  });
+
+  test('stops gracefully on API error without throwing', async () => {
+    axios.post.mockRejectedValue(new Error('HTTP 403: Forbidden'));
+
+    await expect(scraper.loadCVEsStandard()).resolves.toBeUndefined();
+    expect(scraper.cveData.length).toBe(0);
+  });
+
+  test('handles unexpected response structure gracefully', async () => {
+    axios.post.mockResolvedValue({ status: 200, statusText: 'OK', data: {} });
+
+    await expect(scraper.loadCVEsStandard()).resolves.toBeUndefined();
+    expect(scraper.cveData.length).toBe(0);
+  });
+});
