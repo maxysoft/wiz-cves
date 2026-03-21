@@ -497,52 +497,33 @@ describe('WizCVEScraper — loadCVEsStandard', () => {
     jest.clearAllMocks();
   });
 
-  test('uses the Search API endpoint (not the Browse API)', async () => {
-    // Single page with no further results
-    axios.post.mockResolvedValue(
-      makeAlgoliaResponse([makeHit()], 1)
-    );
-    // Inject nbPages into the result so pagination stops after page 0
-    axios.post.mockResolvedValueOnce({
-      status: 200,
-      statusText: 'OK',
-      data: { results: [{ hits: [makeHit()], nbHits: 1, nbPages: 1 }] }
-    });
+  test('uses the Browse API endpoint (not the Search API)', async () => {
+    // Single page with no cursor — signals end of results
+    axios.post.mockResolvedValueOnce(makeBrowseResponse([makeHit()], null, 1));
 
     await scraper.loadCVEsStandard();
 
     const url = axios.post.mock.calls[0][0];
-    expect(url).not.toMatch(/\/browse$/);
-    expect(url).toMatch(/\/1\/indexes\/\*\/queries$/);
+    expect(url).toMatch(/\/browse$/);
+    expect(url).not.toMatch(/\/1\/indexes\/\*\/queries$/);
   });
 
   test('collects CVEs from a single page', async () => {
     const hits = [makeHit(), makeHit({ externalId: 'CVE-2025-0002' })];
-    axios.post.mockResolvedValue({
-      status: 200,
-      statusText: 'OK',
-      data: { results: [{ hits, nbHits: 2, nbPages: 1 }] }
-    });
+    // No cursor in response — only one page
+    axios.post.mockResolvedValueOnce(makeBrowseResponse(hits, null, 2));
 
     await scraper.loadCVEsStandard();
 
     expect(scraper.cveData.length).toBe(2);
   });
 
-  test('paginates across multiple pages', async () => {
-    const page0Response = {
-      status: 200,
-      statusText: 'OK',
-      data: { results: [{ hits: [makeHit()], nbHits: 2, nbPages: 2 }] }
-    };
-    const page1Response = {
-      status: 200,
-      statusText: 'OK',
-      data: { results: [{ hits: [makeHit({ externalId: 'CVE-2025-0002' })], nbHits: 2, nbPages: 2 }] }
-    };
+  test('paginates across multiple browse pages using cursor', async () => {
+    // Page 1 returns a cursor
     axios.post
-      .mockResolvedValueOnce(page0Response)
-      .mockResolvedValueOnce(page1Response);
+      .mockResolvedValueOnce(makeBrowseResponse([makeHit()], 'cursor-1', 2))
+      // Page 2 has no cursor — signals end
+      .mockResolvedValueOnce(makeBrowseResponse([makeHit({ externalId: 'CVE-2025-0002' })], null, 2));
 
     await scraper.loadCVEsStandard();
 
@@ -553,11 +534,8 @@ describe('WizCVEScraper — loadCVEsStandard', () => {
   test('stops when maxCVEs cap is reached', async () => {
     const hits = [makeHit(), makeHit({ externalId: 'CVE-2025-0002' }), makeHit({ externalId: 'CVE-2025-0003' })];
     scraper.options.maxCVEs = 1;
-    axios.post.mockResolvedValue({
-      status: 200,
-      statusText: 'OK',
-      data: { results: [{ hits, nbHits: 3, nbPages: 1 }] }
-    });
+    // Cursor present but cap is reached so no second call should occur
+    axios.post.mockResolvedValueOnce(makeBrowseResponse(hits, 'cursor-next', 3));
 
     await scraper.loadCVEsStandard();
 
@@ -571,8 +549,8 @@ describe('WizCVEScraper — loadCVEsStandard', () => {
     expect(scraper.cveData.length).toBe(0);
   });
 
-  test('handles unexpected response structure gracefully', async () => {
-    axios.post.mockResolvedValue({ status: 200, statusText: 'OK', data: {} });
+  test('handles missing hits array in response gracefully', async () => {
+    axios.post.mockResolvedValueOnce({ status: 200, statusText: 'OK', data: {} });
 
     await expect(scraper.loadCVEsStandard()).resolves.toBeUndefined();
     expect(scraper.cveData.length).toBe(0);

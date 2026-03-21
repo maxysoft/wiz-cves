@@ -445,27 +445,32 @@ class WizCVEScraper {
   }
 
   /**
-   * Standard CVE loading using the Algolia Search API with sequential pagination.
+   * Standard CVE loading using the Algolia Browse API with cursor-based pagination.
    *
-   * Uses the same search endpoint as makeAlgoliaRequest() (which the public API
-   * key can access) and iterates through pages until all results are fetched or
-   * the optional maxCVEs cap is reached.
+   * The Browse API has no 1,000-hit pagination restriction and returns ALL index
+   * records. Each response contains a `cursor` field that must be passed to the
+   * next request; pagination ends when no cursor is returned.
+   *
+   * The Browse API supports up to 1,000 records per request; we use that maximum
+   * to minimise the number of round-trips needed for large indices.
    */
   async loadCVEsStandard() {
-    logger.info('Starting standard CVE loading via Algolia Search API...');
+    logger.info('Starting standard CVE loading via Algolia Browse API...');
 
-    const hitsPerPage = this.options.hitsPerPage || 20;
+    // Browse API maximum is 1,000 records per request — use that for efficiency.
+    const hitsPerPage = Math.min(this.options.hitsPerPage || 1000, 1000);
     const maxCVEs = this.options.maxCVEs || null;
 
-    logger.info(`Search hitsPerPage: ${hitsPerPage}${maxCVEs ? `, maxCVEs cap: ${maxCVEs}` : ', no CVE cap (fetching all)'}`);
+    logger.info(`Browse hitsPerPage: ${hitsPerPage}${maxCVEs ? `, maxCVEs cap: ${maxCVEs}` : ', no CVE cap (fetching all)'}`);
 
     // Track how many CVEs were saved last time to trigger periodic saves correctly.
     let lastSavedCount = 0;
     const checkpointInterval = config.output?.checkpointInterval || 100;
-    let page = 0;
-    let totalPages = null;
+    let cursor = null;
+    let pageNum = 1;
+    let totalHits = null;
 
-    // Create an indeterminate progress bar (we don't know the total yet)
+    // Create a progress bar (total becomes known after the first response)
     const progressBar = new ProgressBar('Loading CVEs [:bar] :current CVEs fetched', {
       complete: '█',
       incomplete: '░',
@@ -475,26 +480,24 @@ class WizCVEScraper {
 
     do {
       try {
-        logger.debug(`Fetching page ${page + 1}${totalPages !== null ? '/' + totalPages : ''}, collected so far=${this.cveData.length}`);
+        logger.debug(`Fetching browse page ${pageNum}, collected so far=${this.cveData.length}`);
 
-        const response = await this.makeAlgoliaRequest(page, hitsPerPage);
-        const result = response.results && response.results[0];
+        const response = await this.makeBrowseRequest(cursor, hitsPerPage);
 
-        if (!result) {
-          logger.warn('Unexpected API response structure — stopping pagination');
+        if (!response || !Array.isArray(response.hits)) {
+          logger.warn('Unexpected Browse API response structure — stopping pagination');
           break;
         }
 
-        if (page === 0) {
-          const totalHits = result.nbHits || 0;
-          totalPages = result.nbPages || Math.ceil(totalHits / hitsPerPage);
-          logger.info(`Total CVEs available in index: ${totalHits}, total pages: ${totalPages}`);
+        if (pageNum === 1) {
+          totalHits = response.nbHits || 0;
+          logger.info(`Total CVEs available in index: ${totalHits}`);
           // Update progress bar total now that we know the real count
           progressBar.total = maxCVEs || totalHits || 1000000;
         }
 
-        const hits = result.hits || [];
-        logger.debug(`Page ${page + 1}: received ${hits.length} hits`);
+        const hits = response.hits;
+        logger.debug(`Browse page ${pageNum}: received ${hits.length} hits`);
 
         // Process each CVE from this page
         for (const hit of hits) {
@@ -509,7 +512,10 @@ class WizCVEScraper {
         }
 
         progressBar.tick(hits.length);
-        page++;
+
+        // Advance cursor for next request; absence of cursor signals last page
+        cursor = response.cursor || null;
+        pageNum++;
 
         // Periodically save accumulated CVEs to the database so data is available
         // even when a full scrape takes a long time (e.g. with gentle mode enabled).
@@ -517,7 +523,7 @@ class WizCVEScraper {
           try {
             saveCVEsToDatabase(this.cveData);
             lastSavedCount = this.cveData.length;
-            logger.info(`Periodic save: ${this.cveData.length} CVEs stored (page ${page})`);
+            logger.info(`Periodic save: ${this.cveData.length} CVEs stored (page ${pageNum - 1})`);
           } catch (saveError) {
             logger.warn('Periodic database save failed:', saveError.message);
           }
@@ -529,16 +535,16 @@ class WizCVEScraper {
         }
 
         // Add delay between page requests to avoid rate limiting
-        if (totalPages === null || page < totalPages) {
+        if (cursor) {
           await sleep(this.options.delayBetweenRequests);
         }
 
       } catch (error) {
-        logger.error(`Failed to fetch page ${page + 1}:`, error.message);
+        logger.error(`Failed to fetch browse page ${pageNum}:`, error.message);
         // Stop on unrecoverable error — partial results were already accumulated
         break;
       }
-    } while (totalPages === null || page < totalPages);
+    } while (cursor !== null);
 
     logger.info(`Finished loading CVEs. Total collected: ${this.cveData.length}`);
   }
