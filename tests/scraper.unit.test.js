@@ -29,12 +29,21 @@ function makeAlgoliaResponse(hits = [], nbHits = hits.length) {
   };
 }
 
+function makeBrowseResponse(hits = [], cursor = null, nbHits = hits.length) {
+  return {
+    status: 200,
+    statusText: 'OK',
+    data: Object.assign({ hits, nbHits }, cursor ? { cursor } : {})
+  };
+}
+
 function makeHit(overrides = {}) {
   return {
     externalId: 'CVE-2025-0001',
     severity: 'HIGH',
-    cvssScore: 8.5,
-    publishedAt: '2025-01-01T00:00:00Z',
+    baseScore: 8.5,
+    cnaScore: 8.5,
+    publishedAt: 1735689600000, // 2025-01-01 as ms timestamp (matches real API)
     description: 'Test vulnerability',
     affectedTechnologies: [{ name: 'Linux' }],
     affectedSoftware: ['kernel 5.x'],
@@ -43,6 +52,13 @@ function makeHit(overrides = {}) {
     hasCisaKevExploit: false,
     isHighProfileThreat: false,
     exploitable: false,
+    epssPercentile: 75.5,
+    epssProbability: 0.012,
+    cvss2: { attackVector: 'NETWORK', attackComplexity: 'LOW' },
+    cvss3: { attackVector: 'NETWORK', attackComplexity: 'HIGH' },
+    sourceFeeds: [{ name: 'GitHub Advisory Database', id: 'abc', url: null }],
+    aiDescription: { overview: 'Test overview', technicalDetails: '' },
+    batchId: '2025-1-01-testbatch',
     ...overrides
   };
 }
@@ -305,6 +321,73 @@ describe('WizCVEScraper — transformAlgoliaHitToCVE', () => {
     expect(cve.additionalResources).toBeDefined();
   });
 
+  test('uses baseScore preferentially over cnaScore and legacy cvssScore', () => {
+    const hit = makeHit({ baseScore: 9.0, cnaScore: 7.0, cvssScore: 5.0 });
+    const cve = scraper.transformAlgoliaHitToCVE(hit);
+    expect(cve.score).toBe(9.0);
+  });
+
+  test('falls back to cnaScore when baseScore is absent', () => {
+    const hit = makeHit({ baseScore: undefined, cnaScore: 7.0, cvssScore: 5.0 });
+    const cve = scraper.transformAlgoliaHitToCVE(hit);
+    expect(cve.score).toBe(7.0);
+  });
+
+  test('falls back to cvssScore when baseScore and cnaScore are absent', () => {
+    const hit = makeHit({ baseScore: undefined, cnaScore: undefined, cvssScore: 5.0 });
+    const cve = scraper.transformAlgoliaHitToCVE(hit);
+    expect(cve.score).toBe(5.0);
+  });
+
+  test('captures epssPercentile and epssProbability', () => {
+    const hit = makeHit({ epssPercentile: 75.5, epssProbability: 0.012 });
+    const cve = scraper.transformAlgoliaHitToCVE(hit);
+    expect(cve.epssPercentile).toBe(75.5);
+    expect(cve.epssProbability).toBe(0.012);
+  });
+
+  test('captures cvss2 and cvss3 objects', () => {
+    const cvss2 = { attackVector: 'NETWORK', attackComplexity: 'LOW' };
+    const cvss3 = { attackVector: 'NETWORK', attackComplexity: 'HIGH' };
+    const hit = makeHit({ cvss2, cvss3 });
+    const cve = scraper.transformAlgoliaHitToCVE(hit);
+    expect(cve.cvss2).toEqual(cvss2);
+    expect(cve.cvss3).toEqual(cvss3);
+  });
+
+  test('captures sourceFeeds array', () => {
+    const sourceFeeds = [{ name: 'GitHub Advisory Database', id: 'abc', url: null }];
+    const hit = makeHit({ sourceFeeds });
+    const cve = scraper.transformAlgoliaHitToCVE(hit);
+    expect(cve.sourceFeeds).toEqual(sourceFeeds);
+  });
+
+  test('captures aiDescription object', () => {
+    const aiDescription = { overview: 'Test overview', technicalDetails: '' };
+    const hit = makeHit({ aiDescription });
+    const cve = scraper.transformAlgoliaHitToCVE(hit);
+    expect(cve.aiDescription).toEqual(aiDescription);
+  });
+
+  test('captures batchId', () => {
+    const hit = makeHit({ batchId: '2025-1-01-testbatch' });
+    const cve = scraper.transformAlgoliaHitToCVE(hit);
+    expect(cve.batchId).toBe('2025-1-01-testbatch');
+  });
+
+  test('sets detailUrl from cveId', () => {
+    const hit = makeHit();
+    const cve = scraper.transformAlgoliaHitToCVE(hit);
+    expect(cve.detailUrl).toBe('https://www.wiz.io/vulnerability-database/cve/cve-2025-0001');
+  });
+
+  test('handles ms-timestamp publishedAt correctly', () => {
+    // 1735689600000 ms = 2025-01-01 UTC
+    const hit = makeHit({ publishedAt: 1735689600000 });
+    const cve = scraper.transformAlgoliaHitToCVE(hit);
+    expect(cve.publishedDate).toBe('2025-01-01');
+  });
+
   test('externalLinks is always an empty array (no per-CVE HTTP scraping)', async () => {
     const hit = makeHit();
     const cve = await scraper.transformAlgoliaHitToCVE(hit);
@@ -320,6 +403,13 @@ describe('WizCVEScraper — transformAlgoliaHitToCVE', () => {
     expect(cve.severity).toBe('N/A');
     expect(cve.score).toBe('N/A');
     expect(cve.technologies).toBe('N/A');
+    expect(cve.epssPercentile).toBeNull();
+    expect(cve.epssProbability).toBeNull();
+    expect(cve.cvss2).toBeNull();
+    expect(cve.cvss3).toBeNull();
+    expect(cve.sourceFeeds).toEqual([]);
+    expect(cve.aiDescription).toBeNull();
+    expect(cve.batchId).toBeNull();
   });
 
   test('returns null when transformation throws an unexpected error', async () => {
@@ -348,5 +438,50 @@ describe('WizCVEScraper — extractCVEList and processCVEDetails', () => {
     const invalidCVE = { id: 'BAD', severity: 'UNKNOWN', score: 99 };
     const result = scraper.processCVEDetails(invalidCVE);
     expect(result).toEqual(invalidCVE);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// makeBrowseRequest
+// ─────────────────────────────────────────────────────────────────────────────
+describe('WizCVEScraper — makeBrowseRequest', () => {
+  let scraper;
+
+  beforeEach(() => {
+    scraper = new WizCVEScraper({ retryAttempts: 1, delayBetweenRequests: 0 });
+    jest.clearAllMocks();
+  });
+
+  test('returns browse response with hits and cursor on first call (no cursor)', async () => {
+    const hits = [makeHit()];
+    axios.post.mockResolvedValue(makeBrowseResponse(hits, 'cursor-abc', 100));
+    const result = await scraper.makeBrowseRequest(null, 1000);
+    expect(result.hits).toHaveLength(1);
+    expect(result.cursor).toBe('cursor-abc');
+    expect(result.nbHits).toBe(100);
+  });
+
+  test('passes cursor in body on subsequent calls', async () => {
+    axios.post.mockResolvedValue(makeBrowseResponse([], null, 100));
+    await scraper.makeBrowseRequest('cursor-xyz', 1000);
+    const callBody = axios.post.mock.calls[0][1];
+    expect(callBody).toEqual({ cursor: 'cursor-xyz' });
+  });
+
+  test('posts to the browse endpoint URL', async () => {
+    axios.post.mockResolvedValue(makeBrowseResponse([], null, 0));
+    await scraper.makeBrowseRequest(null, 1000);
+    const url = axios.post.mock.calls[0][0];
+    expect(url).toMatch(/\/1\/indexes\/cve-db\/browse$/);
+  });
+
+  test('throws when axios rejects', async () => {
+    axios.post.mockRejectedValue(new Error('network error'));
+    await expect(scraper.makeBrowseRequest()).rejects.toThrow('network error');
+  });
+
+  test('throws on non-2xx HTTP status', async () => {
+    axios.post.mockResolvedValue({ status: 403, statusText: 'Forbidden', data: {} });
+    await expect(scraper.makeBrowseRequest()).rejects.toThrow('HTTP 403');
   });
 });
