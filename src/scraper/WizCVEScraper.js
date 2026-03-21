@@ -731,21 +731,18 @@ class WizCVEScraper {
   /**
    * Transform Algolia hit data to CVE format
    */
-  async transformAlgoliaHitToCVE(hit) {
+  transformAlgoliaHitToCVE(hit) {
     try {
       const cveId = hit.externalId || hit.name || hit.id;
-      
-      // Extract additional resources from Wiz.io detail page
-      const additionalResourcesFromPage = await this.extractAdditionalResources(cveId);
-      
+
       return {
         cveId,
         severity: hit.severity || 'N/A',
         score: hit.cvssScore || hit.score || 'N/A',
-        technologies: hit.affectedTechnologies ? 
+        technologies: hit.affectedTechnologies ?
           hit.affectedTechnologies.map(tech => tech.name).join(', ') : 'N/A',
-        component: hit.affectedSoftware ? 
-          hit.affectedSoftware.slice(0, 3).join(', ') + 
+        component: hit.affectedSoftware ?
+          hit.affectedSoftware.slice(0, 3).join(', ') +
           (hit.affectedSoftware.length > 3 ? '...' : '') : 'N/A',
         publishedDate: hit.publishedAt ? new Date(hit.publishedAt).toISOString().split('T')[0] : 'N/A',
         description: cleanText(hit.description || ''),
@@ -758,7 +755,7 @@ class WizCVEScraper {
           sourceUrl: hit.sourceUrl || '',
           affectedSoftware: hit.affectedSoftware || [],
           affectedTechnologies: hit.affectedTechnologies || [],
-          externalLinks: additionalResourcesFromPage
+          externalLinks: []
         }
       };
     } catch (error) {

@@ -504,7 +504,7 @@ class CVEScraperAPI {
       }
     }
 
-    this.app.listen(port, host, () => {
+    this.server = this.app.listen(port, host, () => {
       logger.info(`CVE Scraper API server started on http://${host}:${port}`);
       console.log('\n🚀 CVE Scraper API is running!');
       console.log(`📡 Server: http://${host}:${port}`);
@@ -517,7 +517,23 @@ class CVEScraperAPI {
       console.log('   POST /api/schedule      — Schedule with cron expression');
       console.log('   POST /api/analytics     — Generate analytics');
       console.log('   GET  /api/runs          — Scrape run history');
+
+      // Trigger an immediate scrape on first start when SCRAPE_ON_START=true.
+      // The rate-limiter is intentionally bypassed here so the database is
+      // populated right away without waiting for the first cron tick.
+      if (config.scheduling.scrapeOnStart) {
+        logger.info('SCRAPE_ON_START is enabled — triggering initial scrape job');
+        const jobId = `startup_${Date.now()}`;
+        this.currentScrapingJob = {
+          id: jobId,
+          startTime: new Date().toISOString(),
+          options: this._buildOptions({}),
+          status: 'starting'
+        };
+        this.startScrapingJob(jobId, this._buildOptions({}));
+      }
     });
+    return this.server;
   }
 }
 

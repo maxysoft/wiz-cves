@@ -86,6 +86,10 @@ describe('Config module', () => {
     test('scraping.gentleDelay defaults to 5000', () => {
       expect(config.scraping.gentleDelay).toBe(5000);
     });
+
+    test('scheduling.scrapeOnStart defaults to false', () => {
+      expect(config.scheduling.scrapeOnStart).toBe(false);
+    });
   });
 
   describe('environment variable overrides', () => {
@@ -167,6 +171,21 @@ describe('Config module', () => {
       const cfg = require('../src/config');
       expect(cfg.scraping.gentleMode).toBe(true);
       delete process.env.GENTLE_MODE;
+    });
+
+    test('SCRAPE_ON_START=true enables scrapeOnStart', () => {
+      jest.resetModules();
+      process.env.SCRAPE_ON_START = 'true';
+      const cfg = require('../src/config');
+      expect(cfg.scheduling.scrapeOnStart).toBe(true);
+      delete process.env.SCRAPE_ON_START;
+    });
+
+    test('scrapeOnStart defaults to false', () => {
+      jest.resetModules();
+      delete process.env.SCRAPE_ON_START;
+      const cfg = require('../src/config');
+      expect(cfg.scheduling.scrapeOnStart).toBe(false);
     });
 
     test('DATABASE_PATH overrides database.path', () => {

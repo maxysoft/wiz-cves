@@ -379,4 +379,62 @@ describe('CVEScraperAPI — HTTP endpoints', () => {
       expect(res.statusCode).toBe(404);
     });
   });
+
+  // ── SCRAPE_ON_START startup trigger ───────────────────────────────────────
+  describe('start() — SCRAPE_ON_START', () => {
+    // Re-require config inside tests so we can mutate it safely.
+    // The mock at the top of this file keeps the database and scraper fakes in place.
+    const cfg = require('../src/config');
+
+    test('does NOT start a startup job when scrapeOnStart is false (default)', (done) => {
+      const testApi = new CVEScraperAPI();
+      const spy = jest.spyOn(testApi, 'startScrapingJob').mockResolvedValue();
+
+      const original = cfg.scheduling.scrapeOnStart;
+      cfg.scheduling.scrapeOnStart = false;
+
+      // Use port 0 for random OS-assigned port; restore config after
+      const savedPort = cfg.api.port;
+      const savedHost = cfg.api.host;
+      cfg.api.port = 0;
+      cfg.api.host = '127.0.0.1';
+
+      const server = testApi.start();
+      server.once('listening', () => {
+        setImmediate(() => {
+          const startupCalls = spy.mock.calls.filter(([id]) => id.startsWith('startup_'));
+          expect(startupCalls).toHaveLength(0);
+          cfg.scheduling.scrapeOnStart = original;
+          cfg.api.port = savedPort;
+          cfg.api.host = savedHost;
+          server.close(done);
+        });
+      });
+    });
+
+    test('triggers a startup job immediately when scrapeOnStart is true', (done) => {
+      const testApi = new CVEScraperAPI();
+      const spy = jest.spyOn(testApi, 'startScrapingJob').mockResolvedValue();
+
+      const original = cfg.scheduling.scrapeOnStart;
+      cfg.scheduling.scrapeOnStart = true;
+
+      const savedPort = cfg.api.port;
+      const savedHost = cfg.api.host;
+      cfg.api.port = 0;
+      cfg.api.host = '127.0.0.1';
+
+      const server = testApi.start();
+      server.once('listening', () => {
+        setImmediate(() => {
+          const startupCalls = spy.mock.calls.filter(([id]) => id.startsWith('startup_'));
+          expect(startupCalls).toHaveLength(1);
+          cfg.scheduling.scrapeOnStart = original;
+          cfg.api.port = savedPort;
+          cfg.api.host = savedHost;
+          server.close(done);
+        });
+      });
+    });
+  });
 });

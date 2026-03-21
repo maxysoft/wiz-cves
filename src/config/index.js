@@ -68,7 +68,10 @@ const config = {
     cronExpression: _isValidCron(process.env.SCRAPER_CRON) ? process.env.SCRAPER_CRON.trim() : '',
     // Hard minimum interval between executions (default: 1 hour).  Cannot be
     // lowered below 1 hour — this is enforced in code regardless of this value.
-    minIntervalHours: Math.max(1, parseInt(process.env.MIN_INTERVAL_HOURS, 10) || 1)
+    minIntervalHours: Math.max(1, parseInt(process.env.MIN_INTERVAL_HOURS, 10) || 1),
+    // When true, trigger one scraping job immediately when the API server starts.
+    // Intended for first-start bootstrapping so the database is populated right away.
+    scrapeOnStart: process.env.SCRAPE_ON_START === 'true'
   },
 
   // Algolia API Configuration

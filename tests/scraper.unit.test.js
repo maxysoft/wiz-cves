@@ -291,8 +291,6 @@ describe('WizCVEScraper — transformAlgoliaHitToCVE', () => {
 
   beforeEach(() => {
     scraper = new WizCVEScraper({ retryAttempts: 1, delayBetweenRequests: 0 });
-    // Stub out the network call used to fetch additional resources
-    jest.spyOn(scraper, 'extractAdditionalResources').mockResolvedValue([]);
   });
 
   test('returns a properly shaped CVE object', async () => {
@@ -306,6 +304,13 @@ describe('WizCVEScraper — transformAlgoliaHitToCVE', () => {
     expect(cve.additionalResources).toBeDefined();
   });
 
+  test('externalLinks is always an empty array (no per-CVE HTTP scraping)', async () => {
+    const hit = makeHit();
+    const cve = await scraper.transformAlgoliaHitToCVE(hit);
+    expect(Array.isArray(cve.additionalResources.externalLinks)).toBe(true);
+    expect(cve.additionalResources.externalLinks).toHaveLength(0);
+  });
+
   test('falls back to N/A for missing fields', async () => {
     const hit = { externalId: 'CVE-2025-9999' };
     const cve = await scraper.transformAlgoliaHitToCVE(hit);
@@ -316,13 +321,12 @@ describe('WizCVEScraper — transformAlgoliaHitToCVE', () => {
     expect(cve.technologies).toBe('N/A');
   });
 
-  test('returns null when transformation throws', async () => {
-    jest.spyOn(scraper, 'extractAdditionalResources').mockRejectedValue(
-      new Error('network')
-    );
-    // hit with no externalId causes null fallback
-    const cve = await scraper.transformAlgoliaHitToCVE({ externalId: 'CVE-2025-X' });
-    // extractAdditionalResources throws, so the catch returns null
+  test('returns null when transformation throws an unexpected error', async () => {
+    // A hit whose getter throws causes the catch block to return null
+    const badHit = Object.defineProperty({}, 'externalId', {
+      get() { throw new Error('unexpected parse error'); }
+    });
+    const cve = await scraper.transformAlgoliaHitToCVE(badHit);
     expect(cve).toBeNull();
   });
 });

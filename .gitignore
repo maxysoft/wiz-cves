@@ -230,4 +230,7 @@ tramp
 # Project specific
 checkpoints/
 analytics/
-reports/
+# SQLite database and WAL/shared-memory sidecar files
+data/*.db
+data/*.db-shm
+data/*.db-wal
