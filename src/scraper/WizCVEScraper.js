@@ -7,6 +7,7 @@ const { getRandomUserAgent } = require('../config');
 const {
   sleep,
   saveCheckpoint,
+  saveCVEsToDatabase,
   validateCVEData,
   cleanText
 } = require('../utils/helpers');
@@ -402,46 +403,59 @@ class WizCVEScraper {
       width: 40,
       total: pagesToFetch
     });
-    
+
+    // Track how many CVEs were saved last time to trigger periodic saves correctly.
+    let lastSavedCount = 0;
+    const checkpointInterval = config.output?.checkpointInterval || 100;
+
     // Fetch all pages
     for (let page = 0; page < pagesToFetch; page++) {
       try {
         const response = await this.makeAlgoliaRequest(page, this.options.hitsPerPage);
         const hits = response.results[0].hits || [];
-        
+
         // Process each CVE from this page
         for (const hit of hits) {
           if (this.cveData.length >= maxCVEs) {
             break;
           }
-          
-          const cveData = await this.transformAlgoliaHitToCVE(hit);
+
+          const cveData = this.transformAlgoliaHitToCVE(hit);
           if (cveData && !validateCVEData(cveData).error) {
             this.cveData.push(cveData);
           }
-          
-          // Add small delay between CVE detail page requests
-          await sleep(100);
         }
-        
+
         progressBar.tick();
-        
+
+        // Periodically save accumulated CVEs to the database so data is available
+        // even when a full scrape takes a long time (e.g. with gentle mode enabled).
+        if (this.cveData.length - lastSavedCount >= checkpointInterval && this.cveData.length > 0) {
+          try {
+            saveCVEsToDatabase(this.cveData);
+            lastSavedCount = this.cveData.length;
+            logger.info(`Periodic save: ${this.cveData.length} CVEs stored at page ${page + 1}/${pagesToFetch}`);
+          } catch (saveError) {
+            logger.warn('Periodic database save failed:', saveError.message);
+          }
+        }
+
         // Add delay between requests
         if (page < pagesToFetch - 1) {
           await sleep(this.options.delayBetweenRequests);
         }
-        
+
         if (this.cveData.length >= maxCVEs) {
           logger.info(`Reached maximum CVE limit: ${maxCVEs}`);
           break;
         }
-        
+
       } catch (error) {
         logger.error(`Failed to fetch page ${page}:`, error.message);
         // Continue with next page
       }
     }
-    
+
     logger.info(`Finished loading CVEs. Total collected: ${this.cveData.length}`);
   }
 
@@ -610,19 +624,16 @@ class WizCVEScraper {
           // Process each CVE from this page
           for (const hit of hits) {
             // Check both shared map and local collection limits
-            if ((cveMap.size >= this.options.maxCVEs && this.options.maxCVEs > 0) || 
+            if ((cveMap.size >= this.options.maxCVEs && this.options.maxCVEs > 0) ||
                 (localCVEs.size >= maxHits)) {
               break;
             }
-            
-            const cveData = await this.transformAlgoliaHitToCVE(hit);
+
+            const cveData = this.transformAlgoliaHitToCVE(hit);
             if (cveData && !validateCVEData(cveData).error) {
               // Store in local map first
               localCVEs.set(cveData.cveId, cveData);
             }
-            
-            // Add small delay between CVE detail page requests
-            await sleep(50);
           }
           
           // Break out of page loop if we've reached limits

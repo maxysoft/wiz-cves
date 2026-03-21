@@ -11,7 +11,8 @@ jest.mock('../src/utils/helpers', () => {
   const actual = jest.requireActual('../src/utils/helpers');
   return {
     ...actual,
-    saveCheckpoint: jest.fn().mockResolvedValue('/tmp/checkpoint.json')
+    saveCheckpoint: jest.fn().mockResolvedValue('/tmp/checkpoint.json'),
+    saveCVEsToDatabase: jest.fn().mockReturnValue(0)
   };
 });
 

@@ -164,7 +164,8 @@ class CVEScraperApp {
         retryAttempts: options.retry,
         maxCVEs: options.maxCves,
         resumeFromCheckpoint: options.resume,
-        useComprehensiveScraping: !gentleMode,
+        useComprehensiveScraping: gentleMode ? false : config.scraping.useComprehensiveScraping,
+        ...(gentleMode ? { hitsPerPage: config.scraping.gentleHitsPerPage } : {}),
         gentleMode
       };
 
@@ -233,7 +234,8 @@ class CVEScraperApp {
       const scraperOptions = {
         delayBetweenRequests: gentleMode ? config.scraping.gentleDelay : options.delay,
         retryAttempts: config.scraping.retryAttempts,
-        useComprehensiveScraping: !gentleMode,
+        useComprehensiveScraping: gentleMode ? false : config.scraping.useComprehensiveScraping,
+        ...(gentleMode ? { hitsPerPage: config.scraping.gentleHitsPerPage } : {}),
         gentleMode
       };
 

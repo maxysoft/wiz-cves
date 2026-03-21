@@ -87,6 +87,10 @@ describe('Config module', () => {
       expect(config.scraping.gentleDelay).toBe(5000);
     });
 
+    test('scraping.useComprehensiveScraping defaults to false', () => {
+      expect(config.scraping.useComprehensiveScraping).toBe(false);
+    });
+
     test('scheduling.scrapeOnStart defaults to false', () => {
       expect(config.scheduling.scrapeOnStart).toBe(false);
     });
@@ -171,6 +175,21 @@ describe('Config module', () => {
       const cfg = require('../src/config');
       expect(cfg.scraping.gentleMode).toBe(true);
       delete process.env.GENTLE_MODE;
+    });
+
+    test('USE_COMPREHENSIVE_SCRAPING=true enables comprehensive scraping', () => {
+      jest.resetModules();
+      process.env.USE_COMPREHENSIVE_SCRAPING = 'true';
+      const cfg = require('../src/config');
+      expect(cfg.scraping.useComprehensiveScraping).toBe(true);
+      delete process.env.USE_COMPREHENSIVE_SCRAPING;
+    });
+
+    test('USE_COMPREHENSIVE_SCRAPING defaults to false when not set', () => {
+      jest.resetModules();
+      delete process.env.USE_COMPREHENSIVE_SCRAPING;
+      const cfg = require('../src/config');
+      expect(cfg.scraping.useComprehensiveScraping).toBe(false);
     });
 
     test('SCRAPE_ON_START=true enables scrapeOnStart', () => {

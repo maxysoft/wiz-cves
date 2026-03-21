@@ -452,14 +452,18 @@ class CVEScraperAPI {
 
   _buildOptions(body = {}) {
     const gentleMode = body.gentleMode !== undefined ? body.gentleMode : config.scraping.gentleMode;
+    const useComprehensiveScraping = body.useComprehensiveScraping !== undefined
+      ? body.useComprehensiveScraping
+      : (gentleMode ? false : config.scraping.useComprehensiveScraping);
     return {
       maxConcurrentRequests: body.maxConcurrency || config.scraping.maxConcurrentRequests,
       delayBetweenRequests: gentleMode
         ? config.scraping.gentleDelay
         : (body.delayBetweenRequests || config.scraping.delayBetweenRequests),
+      ...(gentleMode ? { hitsPerPage: config.scraping.gentleHitsPerPage } : {}),
       retryAttempts: body.retryAttempts || config.scraping.retryAttempts,
       maxCVEs: body.maxCVEs || null,
-      useComprehensiveScraping: body.useComprehensiveScraping !== undefined ? body.useComprehensiveScraping : !gentleMode,
+      useComprehensiveScraping,
       gentleMode
     };
   }
