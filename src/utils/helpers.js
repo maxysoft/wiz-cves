@@ -178,6 +178,15 @@ const validateCVEData = (cveData) => {
     hasFix: Joi.boolean().default(false),
     isHighProfileThreat: Joi.boolean().default(false),
     exploitable: Joi.boolean().default(false),
+    epssPercentile: Joi.number().min(0).max(100).allow(null),
+    epssProbability: Joi.number().min(0).max(1).allow(null),
+    baseScore: Joi.number().min(0).max(10).allow(null),
+    cnaScore: Joi.number().min(0).max(10).allow(null),
+    cvss2: Joi.object().allow(null),
+    cvss3: Joi.object().allow(null),
+    sourceFeeds: Joi.array().default([]),
+    aiDescription: Joi.object().allow(null),
+    batchId: Joi.string().allow('', null),
     additionalResources: Joi.alternatives().try(
       Joi.array().items(
         Joi.object({

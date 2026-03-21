@@ -179,6 +179,45 @@ describe('CVEDatabase — CVE operations', () => {
     const cve = db.getCVEById('CVE-2025-00001');
     expect(cve.additionalResources).toEqual(resources);
   });
+
+  test('new fields (epss, cvss2/3, sourceFeeds, aiDescription, batchId) round-trip correctly', () => {
+    const cve = makeCVE({
+      epssPercentile: 75.5,
+      epssProbability: 0.012,
+      baseScore: 8.5,
+      cnaScore: 8.0,
+      cvss2: { attackVector: 'NETWORK', attackComplexity: 'LOW' },
+      cvss3: { attackVector: 'NETWORK', attackComplexity: 'HIGH' },
+      sourceFeeds: [{ name: 'GitHub Advisory Database', id: 'abc' }],
+      aiDescription: { overview: 'Test overview', technicalDetails: '' },
+      batchId: '2025-1-01-testbatch'
+    });
+    db.saveCVEs([cve]);
+    const loaded = db.getCVEById('CVE-2025-00001');
+    expect(loaded.epssPercentile).toBe(75.5);
+    expect(loaded.epssProbability).toBe(0.012);
+    expect(loaded.baseScore).toBe(8.5);
+    expect(loaded.cnaScore).toBe(8.0);
+    expect(loaded.cvss2).toEqual({ attackVector: 'NETWORK', attackComplexity: 'LOW' });
+    expect(loaded.cvss3).toEqual({ attackVector: 'NETWORK', attackComplexity: 'HIGH' });
+    expect(loaded.sourceFeeds).toEqual([{ name: 'GitHub Advisory Database', id: 'abc' }]);
+    expect(loaded.aiDescription).toEqual({ overview: 'Test overview', technicalDetails: '' });
+    expect(loaded.batchId).toBe('2025-1-01-testbatch');
+  });
+
+  test('new fields default to null when not provided', () => {
+    db.saveCVEs([makeCVE()]);
+    const loaded = db.getCVEById('CVE-2025-00001');
+    expect(loaded.epssPercentile).toBeNull();
+    expect(loaded.epssProbability).toBeNull();
+    expect(loaded.baseScore).toBeNull();
+    expect(loaded.cnaScore).toBeNull();
+    expect(loaded.cvss2).toBeNull();
+    expect(loaded.cvss3).toBeNull();
+    expect(loaded.sourceFeeds).toEqual([]);
+    expect(loaded.aiDescription).toBeNull();
+    expect(loaded.batchId).toBeNull();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

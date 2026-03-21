@@ -378,45 +378,120 @@ class WizCVEScraper {
   }
 
   /**
-   * Standard CVE loading (original method)
+   * Make a request to the Algolia Browse API (cursor-based, no 1000-result limit).
+   * The Browse API returns ALL index records without the pagination restriction of the
+   * standard Search API (which caps at paginationLimitedTo, typically 1 000 hits).
+   *
+   * @param {string|null} cursor - Cursor returned by a previous browse response, or null to start.
+   * @param {number} hitsPerPage - Records to return per request (max 1000 for Browse).
+   * @returns {Promise<Object>} Browse response containing `hits`, optional `cursor`, and `nbHits`.
+   */
+  async makeBrowseRequest(cursor = null, hitsPerPage = 1000) {
+    const browseUrl = `${this.algoliaConfig.baseUrl.replace('/1/indexes/*/queries', '')}/1/indexes/${this.algoliaConfig.indexName}/browse`;
+
+    const maxRetries = this.options.retryAttempts;
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const body = cursor ? { cursor } : { query: '', hitsPerPage };
+
+        const headers = {
+          'Content-Type': 'application/json',
+          'User-Agent': getRandomUserAgent(),
+          'x-algolia-agent': 'Algolia for JavaScript (5.25.0); Search (5.25.0); Browser',
+          'x-algolia-api-key': this.algoliaConfig.apiKey,
+          'x-algolia-application-id': this.algoliaConfig.applicationId
+        };
+
+        const axiosConfig = {
+          headers,
+          timeout: this.algoliaConfig.timeout,
+          httpsAgent: new https.Agent({
+            keepAlive: true,
+            timeout: this.algoliaConfig.timeout,
+            freeSocketTimeout: 30000
+          }),
+          validateStatus: (status) => status < 500
+        };
+
+        logger.debug(`Browse request: cursor=${cursor ? 'present' : 'null'}, hitsPerPage=${hitsPerPage}, attempt=${attempt}`);
+
+        const response = await axios.post(browseUrl, body, axiosConfig);
+
+        if (response.status >= 200 && response.status < 300) {
+          if (attempt > 1) {
+            logger.info(`Browse request succeeded on attempt ${attempt}`);
+          }
+          return response.data;
+        }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      } catch (error) {
+        lastError = error;
+        const isRetryable = this.isRetryableError(error);
+
+        if (attempt === maxRetries || !isRetryable) {
+          logger.error(`Browse API request failed after ${attempt} attempts: ${error.message}`);
+          throw error;
+        }
+
+        const backoffDelay = Math.min(1000 * Math.pow(2, attempt - 1) + Math.random() * 1000, 30000);
+        logger.warn(`Browse request failed (attempt ${attempt}/${maxRetries}), retrying in ${Math.round(backoffDelay)}ms: ${error.message}`);
+        await sleep(backoffDelay);
+      }
+    }
+
+    throw lastError;
+  }
+
+  /**
+   * Standard CVE loading using the Algolia Browse API.
+   *
+   * The Browse API uses cursor-based pagination and is not subject to the
+   * standard Search API's paginationLimitedTo cap (usually 1 000 hits).
+   * This allows retrieving the full index without any artificial page limit.
    */
   async loadCVEsStandard() {
-    logger.info('Starting standard CVE loading via Algolia API...');
-    
-    // First, get total count
-    const initialResponse = await this.makeAlgoliaRequest(0, 1);
-    const totalHits = initialResponse.results[0].nbHits || 0;
-    const totalPages = Math.ceil(totalHits / this.options.hitsPerPage);
-    
-    logger.info(`Total CVEs available: ${totalHits}, Total pages: ${totalPages}`);
-    
-    // Determine how many CVEs to actually fetch
-    const maxCVEs = this.options.maxCVEs || totalHits;
-    const pagesToFetch = Math.min(totalPages, Math.ceil(maxCVEs / this.options.hitsPerPage));
-    
-    logger.info(`Will fetch ${pagesToFetch} pages (up to ${maxCVEs} CVEs)`);
-    
-    // Create progress bar
-    const progressBar = new ProgressBar('Loading CVEs [:bar] :current/:total (:percent) ETA: :etas', {
-      complete: '█',
-      incomplete: '░',
-      width: 40,
-      total: pagesToFetch
-    });
+    logger.info('Starting standard CVE loading via Algolia Browse API...');
+
+    // Use a higher page size for the Browse API (up to 1000 per request)
+    const browseHitsPerPage = Math.min(this.options.hitsPerPage || 1000, 1000);
+    const maxCVEs = this.options.maxCVEs || null;
+
+    logger.info(`Browse hitsPerPage: ${browseHitsPerPage}${maxCVEs ? `, maxCVEs cap: ${maxCVEs}` : ', no CVE cap (fetching all)'}`);
 
     // Track how many CVEs were saved last time to trigger periodic saves correctly.
     let lastSavedCount = 0;
     const checkpointInterval = config.output?.checkpointInterval || 100;
+    let cursor = null;
+    let batchIndex = 0;
 
-    // Fetch all pages
-    for (let page = 0; page < pagesToFetch; page++) {
+    // Create an indeterminate progress bar (we don't know the total yet)
+    const progressBar = new ProgressBar('Loading CVEs [:bar] :current CVEs fetched', {
+      complete: '█',
+      incomplete: '░',
+      width: 40,
+      total: maxCVEs || 1000000 // use a large sentinel when cap is unknown
+    });
+
+    do {
       try {
-        const response = await this.makeAlgoliaRequest(page, this.options.hitsPerPage);
-        const hits = response.results[0].hits || [];
+        logger.debug(`Fetching browse batch ${batchIndex + 1}, cursor=${cursor ? 'present' : 'null'}, collected so far=${this.cveData.length}`);
 
-        // Process each CVE from this page
+        const response = await this.makeBrowseRequest(cursor, browseHitsPerPage);
+        const hits = response.hits || [];
+        cursor = response.cursor || null;
+
+        if (batchIndex === 0) {
+          const totalHits = response.nbHits || 0;
+          logger.info(`Total CVEs available in index: ${totalHits}`);
+        }
+
+        logger.debug(`Browse batch ${batchIndex + 1}: received ${hits.length} hits, next cursor=${cursor ? 'present' : 'absent'}`);
+
+        // Process each CVE from this batch
         for (const hit of hits) {
-          if (this.cveData.length >= maxCVEs) {
+          if (maxCVEs && this.cveData.length >= maxCVEs) {
             break;
           }
 
@@ -426,7 +501,8 @@ class WizCVEScraper {
           }
         }
 
-        progressBar.tick();
+        progressBar.tick(hits.length);
+        batchIndex++;
 
         // Periodically save accumulated CVEs to the database so data is available
         // even when a full scrape takes a long time (e.g. with gentle mode enabled).
@@ -434,27 +510,28 @@ class WizCVEScraper {
           try {
             saveCVEsToDatabase(this.cveData);
             lastSavedCount = this.cveData.length;
-            logger.info(`Periodic save: ${this.cveData.length} CVEs stored at page ${page + 1}/${pagesToFetch}`);
+            logger.info(`Periodic save: ${this.cveData.length} CVEs stored (batch ${batchIndex})`);
           } catch (saveError) {
             logger.warn('Periodic database save failed:', saveError.message);
           }
         }
 
-        // Add delay between requests
-        if (page < pagesToFetch - 1) {
-          await sleep(this.options.delayBetweenRequests);
-        }
-
-        if (this.cveData.length >= maxCVEs) {
+        if (maxCVEs && this.cveData.length >= maxCVEs) {
           logger.info(`Reached maximum CVE limit: ${maxCVEs}`);
           break;
         }
 
+        // Add delay between requests to avoid rate limiting
+        if (cursor) {
+          await sleep(this.options.delayBetweenRequests);
+        }
+
       } catch (error) {
-        logger.error(`Failed to fetch page ${page}:`, error.message);
-        // Continue with next page
+        logger.error(`Failed to fetch browse batch ${batchIndex + 1}:`, error.message);
+        // Stop on unrecoverable error — partial results were already accumulated
+        break;
       }
-    }
+    } while (cursor);
 
     logger.info(`Finished loading CVEs. Total collected: ${this.cveData.length}`);
   }
@@ -740,28 +817,62 @@ class WizCVEScraper {
   }
 
   /**
-   * Transform Algolia hit data to CVE format
+   * Transform Algolia hit data to CVE format.
+   * Maps all available fields from the Algolia API response.
    */
   transformAlgoliaHitToCVE(hit) {
     try {
       const cveId = hit.externalId || hit.name || hit.id;
 
+      // Prefer baseScore, then cnaScore, then legacy fields, then null
+      const score = hit.baseScore ?? hit.cnaScore ?? hit.cvssScore ?? hit.score ?? null;
+
+      // Build the detail URL from the CVE ID
+      const detailUrl = cveId ? `https://www.wiz.io/vulnerability-database/cve/${cveId.toLowerCase()}` : '';
+
+      // Published date: API returns milliseconds-since-epoch or an ISO string
+      let publishedDate = 'N/A';
+      if (hit.publishedAt) {
+        try {
+          const ts = typeof hit.publishedAt === 'number'
+            ? new Date(hit.publishedAt)
+            : new Date(hit.publishedAt);
+          publishedDate = ts.toISOString().split('T')[0];
+        } catch (_e) {
+          publishedDate = 'N/A';
+        }
+      }
+
       return {
         cveId,
         severity: hit.severity || 'N/A',
-        score: hit.cvssScore || hit.score || 'N/A',
+        score: typeof score === 'number' ? score : 'N/A',
         technologies: hit.affectedTechnologies ?
           hit.affectedTechnologies.map(tech => tech.name).join(', ') : 'N/A',
         component: hit.affectedSoftware ?
           hit.affectedSoftware.slice(0, 3).join(', ') +
           (hit.affectedSoftware.length > 3 ? '...' : '') : 'N/A',
-        publishedDate: hit.publishedAt ? new Date(hit.publishedAt).toISOString().split('T')[0] : 'N/A',
+        publishedDate,
+        detailUrl,
         description: cleanText(hit.description || ''),
         sourceUrl: hit.sourceUrl || '',
         hasCisaKevExploit: hit.hasCisaKevExploit || false,
         hasFix: hit.hasFix || false,
         isHighProfileThreat: hit.isHighProfileThreat || false,
         exploitable: hit.exploitable || false,
+        // EPSS threat-intelligence scores
+        epssPercentile: hit.epssPercentile ?? null,
+        epssProbability: hit.epssProbability ?? null,
+        // CVSS vector details
+        baseScore: hit.baseScore ?? null,
+        cnaScore: hit.cnaScore ?? null,
+        cvss2: hit.cvss2 || null,
+        cvss3: hit.cvss3 || null,
+        // Source feed / advisory details
+        sourceFeeds: hit.sourceFeeds || [],
+        // AI-generated summary sections
+        aiDescription: hit.aiDescription || null,
+        batchId: hit.batchId || null,
         additionalResources: {
           sourceUrl: hit.sourceUrl || '',
           affectedSoftware: hit.affectedSoftware || [],

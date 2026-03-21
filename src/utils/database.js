@@ -93,6 +93,27 @@ class CVEDatabase {
         job_type    TEXT    DEFAULT 'manual'
       );
     `);
+
+    // Add new columns to existing databases (idempotent — skip if already present)
+    const existingColumns = new Set(
+      this.db.prepare('PRAGMA table_info(cves)').all().map(c => c.name)
+    );
+    const newColumns = [
+      ['epss_percentile', 'REAL'],
+      ['epss_probability', 'REAL'],
+      ['base_score', 'REAL'],
+      ['cna_score', 'REAL'],
+      ['cvss2', 'TEXT'],
+      ['cvss3', 'TEXT'],
+      ['source_feeds', 'TEXT DEFAULT \'[]\''],
+      ['ai_description', 'TEXT'],
+      ['batch_id', 'TEXT']
+    ];
+    for (const [colName, colDef] of newColumns) {
+      if (!existingColumns.has(colName)) {
+        this.db.exec(`ALTER TABLE cves ADD COLUMN ${colName} ${colDef}`);
+      }
+    }
   }
 
   // ── CVE operations ─────────────────────────────────────────────────────────
@@ -112,11 +133,15 @@ class CVEDatabase {
       INSERT INTO cves
         (cve_id, severity, score, technologies, component, published_date,
          detail_url, description, source_url, has_cisa_kev_exploit, has_fix,
-         is_high_profile_threat, exploitable, additional_resources, updated_at)
+         is_high_profile_threat, exploitable, additional_resources,
+         epss_percentile, epss_probability, base_score, cna_score,
+         cvss2, cvss3, source_feeds, ai_description, batch_id, updated_at)
       VALUES
         (@cveId, @severity, @score, @technologies, @component, @publishedDate,
          @detailUrl, @description, @sourceUrl, @hasCisaKevExploit, @hasFix,
-         @isHighProfileThreat, @exploitable, @additionalResources, datetime('now'))
+         @isHighProfileThreat, @exploitable, @additionalResources,
+         @epssPercentile, @epssProbability, @baseScore, @cnaScore,
+         @cvss2, @cvss3, @sourceFeeds, @aiDescription, @batchId, datetime('now'))
       ON CONFLICT(cve_id) DO UPDATE SET
         severity               = excluded.severity,
         score                  = excluded.score,
@@ -131,6 +156,15 @@ class CVEDatabase {
         is_high_profile_threat = excluded.is_high_profile_threat,
         exploitable            = excluded.exploitable,
         additional_resources   = excluded.additional_resources,
+        epss_percentile        = excluded.epss_percentile,
+        epss_probability       = excluded.epss_probability,
+        base_score             = excluded.base_score,
+        cna_score              = excluded.cna_score,
+        cvss2                  = excluded.cvss2,
+        cvss3                  = excluded.cvss3,
+        source_feeds           = excluded.source_feeds,
+        ai_description         = excluded.ai_description,
+        batch_id               = excluded.batch_id,
         updated_at             = datetime('now')
     `);
 
@@ -150,7 +184,16 @@ class CVEDatabase {
           hasFix: cve.hasFix ? 1 : 0,
           isHighProfileThreat: cve.isHighProfileThreat ? 1 : 0,
           exploitable: cve.exploitable ? 1 : 0,
-          additionalResources: JSON.stringify(cve.additionalResources || [])
+          additionalResources: JSON.stringify(cve.additionalResources || []),
+          epssPercentile: typeof cve.epssPercentile === 'number' ? cve.epssPercentile : null,
+          epssProbability: typeof cve.epssProbability === 'number' ? cve.epssProbability : null,
+          baseScore: typeof cve.baseScore === 'number' ? cve.baseScore : null,
+          cnaScore: typeof cve.cnaScore === 'number' ? cve.cnaScore : null,
+          cvss2: cve.cvss2 ? JSON.stringify(cve.cvss2) : null,
+          cvss3: cve.cvss3 ? JSON.stringify(cve.cvss3) : null,
+          sourceFeeds: JSON.stringify(cve.sourceFeeds || []),
+          aiDescription: cve.aiDescription ? JSON.stringify(cve.aiDescription) : null,
+          batchId: cve.batchId || null
         });
       }
     });
@@ -232,6 +275,15 @@ class CVEDatabase {
       isHighProfileThreat: Boolean(row.is_high_profile_threat),
       exploitable: Boolean(row.exploitable),
       additionalResources: this._parseJSON(row.additional_resources, []),
+      epssPercentile: row.epss_percentile ?? null,
+      epssProbability: row.epss_probability ?? null,
+      baseScore: row.base_score ?? null,
+      cnaScore: row.cna_score ?? null,
+      cvss2: this._parseJSON(row.cvss2, null),
+      cvss3: this._parseJSON(row.cvss3, null),
+      sourceFeeds: this._parseJSON(row.source_feeds, []),
+      aiDescription: this._parseJSON(row.ai_description, null),
+      batchId: row.batch_id || null,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
